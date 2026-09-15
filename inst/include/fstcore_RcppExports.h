@@ -104,6 +104,26 @@ namespace fstcore {
         return Rcpp::as<SEXP >(rcpp_result_gen);
     }
 
+    inline SEXP fstappend(Rcpp::String fileName, SEXP table, SEXP compression, SEXP uniformEncoding) {
+        typedef SEXP(*Ptr_fstappend)(SEXP,SEXP,SEXP,SEXP);
+        static Ptr_fstappend p_fstappend = NULL;
+        if (p_fstappend == NULL) {
+            validateSignature("SEXP(*fstappend)(Rcpp::String,SEXP,SEXP,SEXP)");
+            p_fstappend = (Ptr_fstappend)R_GetCCallable("fstcore", "_fstcore_fstappend");
+        }
+        RObject rcpp_result_gen;
+        {
+            rcpp_result_gen = p_fstappend(Shield<SEXP>(Rcpp::wrap(fileName)), Shield<SEXP>(Rcpp::wrap(table)), Shield<SEXP>(Rcpp::wrap(compression)), Shield<SEXP>(Rcpp::wrap(uniformEncoding)));
+        }
+        if (rcpp_result_gen.inherits("interrupted-error"))
+            throw Rcpp::internal::InterruptedException();
+        if (Rcpp::internal::isLongjumpSentinel(rcpp_result_gen))
+            throw Rcpp::LongjumpException(rcpp_result_gen);
+        if (rcpp_result_gen.inherits("try-error"))
+            throw Rcpp::exception(Rcpp::as<std::string>(rcpp_result_gen).c_str());
+        return Rcpp::as<SEXP >(rcpp_result_gen);
+    }
+
     inline SEXP fsthasher(SEXP rawVec, SEXP seed, SEXP blockHash) {
         typedef SEXP(*Ptr_fsthasher)(SEXP,SEXP,SEXP);
         static Ptr_fsthasher p_fsthasher = NULL;

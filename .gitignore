@@ -23,3 +23,5 @@
 /src/fstlib/ZSTD/dll/*
 /src/fstlib/ZSTD/legacy/*
 /CRAN-SUBMISSION
+
+/src/Makevars

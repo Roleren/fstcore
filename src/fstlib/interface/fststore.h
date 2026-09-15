@@ -21,6 +21,7 @@
 
 
 #include <vector>
+#include <interface/istringwriter.h>
 #include <memory>
 
 #include <interface/icolumnfactory.h>
@@ -32,7 +33,11 @@ class FstStore
   std::string fstFile;
   std::unique_ptr<char[]> metaDataBlockP;
 
+  void fstWriteImpl(IFstTable &fstTable, int compress, const FstStore* existing,
+    IStringWriter* allNames) const;
+
   public:
+    std::vector<unsigned long long> columnPositions;
     unsigned long long* p_nrOfRows;
     int* keyColPos;
 
@@ -57,6 +62,9 @@ class FstStore
      * \param compress Compression factor with a value 0-100
      */
     void fstWrite(IFstTable &fstTable, int compress) const;
+
+    // Existing metadata must have been loaded under the caller's exclusive lock.
+    void fstAppend(IFstTable &fstTable, int compress, IStringWriter* allNames) const;
 
     void fstMeta(IColumnFactory* columnFactory, IStringColumn* col_names);
 

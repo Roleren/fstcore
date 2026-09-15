@@ -17,6 +17,10 @@ fstretrieve <- function(fileName, columnSelection, startRow, endRow) {
     .Call(`_fstcore_fstretrieve`, fileName, columnSelection, startRow, endRow)
 }
 
+fstappend <- function(fileName, table, compression, uniformEncoding) {
+    .Call(`_fstcore_fstappend`, fileName, table, compression, uniformEncoding)
+}
+
 getnrofthreads <- function() {
     .Call(`_fstcore_getnrofthreads`)
 }

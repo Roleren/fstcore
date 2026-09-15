@@ -22,6 +22,7 @@
 #include <cstring>
 #include <algorithm>
 #include <memory>
+#include <limits>
 
 #include <interface/istringwriter.h>
 #include <interface/ifsttable.h>
@@ -169,7 +170,7 @@ inline unsigned int ReadHeader(ifstream &myfile, int &keyLength, int &nrOfColsFi
   }
 
   // Compare file version with current
-  if (*p_tableVersionMax > FST_VERSION)
+  if (*p_tableVersionMax > FST_APPEND_VERSION)
   {
     myfile.close();
     throw(runtime_error(FSTERROR_UPDATE_FST));
@@ -178,6 +179,19 @@ inline unsigned int ReadHeader(ifstream &myfile, int &keyLength, int &nrOfColsFi
   keyLength          = *p_keyLength;
   nrOfColsFirstChunk = *p_nrOfCols;
 
+  if (nrOfColsFirstChunk < 0 || keyLength < 0 || keyLength > nrOfColsFirstChunk)
+    throw runtime_error(FSTERROR_DAMAGED_HEADER);
+  // Version 1 readers assumed contiguous metadata. Version 2 follows the pointer.
+  const uint64_t keyBytes = keyLength ? 8ULL + 4ULL * (keyLength + keyLength % 2) : 0;
+  uint64_t primary;
+  memcpy(&primary, tableMeta + 32, 8);
+  myfile.seekg(0, ios::end);
+  const auto fileSize = myfile.tellg();
+  const uint64_t required = CHUNKSET_HEADER_SIZE + 8ULL * nrOfColsFirstChunk + 24;
+  if (fileSize < 0 || primary < TABLE_META_SIZE + keyBytes ||
+      primary > static_cast<uint64_t>(fileSize) || required > static_cast<uint64_t>(fileSize) - primary)
+    throw runtime_error(FSTERROR_DAMAGED_HEADER);
+  myfile.seekg(primary - keyBytes);
   return *p_tableVersionMax;
 }
 
@@ -210,9 +224,30 @@ inline void SetKeyIndex(vector<int> &keyIndex, const int keyLength, const int nr
  */
 void FstStore::fstWrite(IFstTable &fstTable, const int compress) const
 {
-  // Meta on dataset
-  const int nrOfCols =  fstTable.NrOfColumns();  // number of columns in table
-  const int keyLength = fstTable.NrOfKeys();  // number of key columns in table
+  fstWriteImpl(fstTable, compress, nullptr, nullptr);
+}
+
+void FstStore::fstAppend(IFstTable &fstTable, const int compress, IStringWriter* allNames) const
+{
+  if (!p_nrOfRows || columnPositions.size() != static_cast<size_t>(nrOfCols))
+    throw runtime_error("Load fst metadata before appending columns.");
+  if (compress < 0 || compress > 100)
+    throw runtime_error("Compression must be between 0 and 100.");
+  if (fstTable.NrOfRows() != *p_nrOfRows)
+    throw runtime_error("New columns must have the same number of rows as the fst file.");
+  if (fstTable.NrOfColumns() == 0 || fstTable.NrOfColumns() > static_cast<unsigned int>(std::numeric_limits<int>::max() - nrOfCols))
+    throw runtime_error("Invalid number of columns to append.");
+  if (!allNames || allNames->vecLength != nrOfCols + fstTable.NrOfColumns())
+    throw runtime_error("Incorrect combined column names.");
+  fstWriteImpl(fstTable, compress, this, allNames);
+}
+
+void FstStore::fstWriteImpl(IFstTable &fstTable, const int compress,
+  const FstStore* existing, IStringWriter* allNames) const
+{
+  const int oldCols = existing ? existing->nrOfCols : 0;
+  const int nrOfCols = oldCols + fstTable.NrOfColumns();
+  const int keyLength = existing ? existing->keyLength : fstTable.NrOfKeys();
 
   const unsigned long long tableHeaderSize = TABLE_META_SIZE;
   unsigned long long keyIndexHeaderSize = 0;
@@ -295,7 +330,7 @@ void FstStore::fstWrite(IFstTable &fstTable, const int compress) const
 
   *p_fst_magic_number               = FST_MAGIC_NUMBER;
   *p_freeBytes1                     = 0;
-  *p_tableVersionMax                = FST_VERSION;
+  *p_tableVersionMax                = existing ? FST_APPEND_VERSION : FST_VERSION;
 
   if (isLittleEndian) *p_tableFlags = 1;
 
@@ -309,7 +344,8 @@ void FstStore::fstWrite(IFstTable &fstTable, const int compress) const
 
   if (keyLength != 0)
   {
-    fstTable.GetKeyColumns(keyColPos);
+    if (existing) std::copy(existing->keyColPos, existing->keyColPos + keyLength, keyColPos);
+    else fstTable.GetKeyColumns(keyColPos);
     *p_keyIndexHash = ZSTD_XXH64(&metaDataWriteBlock[tableHeaderSize + 8], keyIndexHeaderSize - 8, FST_HASH_SEED);
   }
 
@@ -346,7 +382,9 @@ void FstStore::fstWrite(IFstTable &fstTable, const int compress) const
 
 
   // Open file in binary mode
-  myfile.open(fstFile.c_str(), ios::out | ios::binary);  // write stream only
+  myfile.open(fstFile.c_str(), existing ? (ios::in | ios::out | ios::binary) : (ios::out | ios::binary));
+  if (existing) myfile.seekp(0, ios::end);
+  const auto writeStart = myfile.tellp();
 
   if (myfile.fail())
   {
@@ -354,13 +392,16 @@ void FstStore::fstWrite(IFstTable &fstTable, const int compress) const
     throw(runtime_error(FSTERROR_ERROR_OPEN_WRITE));
   }
 
+  *primaryChunkSetLoc = static_cast<uint64_t>(writeStart) + TABLE_META_SIZE + keyIndexHeaderSize;
+  *p_headerHash = ZSTD_XXH64(&metaDataWriteBlock[8], TABLE_META_SIZE - 8, FST_HASH_SEED);
+
   // Write table meta information
   myfile.write(metaDataWriteBlock, metaDataSize);  // table meta data
 
   // Serialize column names
   {
-    std::unique_ptr<IStringWriter> blockRunnerP(fstTable.GetColNameWriter());
-    IStringWriter* blockRunner = blockRunnerP.get();
+    std::unique_ptr<IStringWriter> blockRunnerP(existing ? nullptr : fstTable.GetColNameWriter());
+    IStringWriter* blockRunner = existing ? allNames : blockRunnerP.get();
     fdsWriteCharVec_v6(myfile, blockRunner, 0, blockRunner->Encoding());   // column names
   }
 
@@ -418,6 +459,16 @@ void FstStore::fstWrite(IFstTable &fstTable, const int compress) const
   // column data
   for (int colNr = 0; colNr < nrOfCols; ++colNr)
   {
+    if (colNr < oldCols)
+    {
+      positionData[colNr] = existing->columnPositions[colNr];
+      colBaseTypes[colNr] = existing->colBaseTypes[colNr];
+      colAttributeTypes[colNr] = existing->colAttributeTypes[colNr];
+      colScales[colNr] = existing->colScales[colNr];
+      colTypes[colNr] = existing->colTypes[colNr];
+      continue;
+    }
+    const int sourceCol = colNr - oldCols;
     positionData[colNr] = myfile.tellp();  // current location
   	FstColumnAttribute colAttribute;
   	std::string annotation = "";
@@ -425,7 +476,7 @@ void FstStore::fstWrite(IFstTable &fstTable, const int compress) const
     bool hasAnnotation;
 
   	// get type and add annotation
-    const FstColumnType colType = fstTable.ColumnType(colNr, colAttribute, scale, annotation, hasAnnotation);
+    const FstColumnType colType = fstTable.ColumnType(sourceCol, colAttribute, scale, annotation, hasAnnotation);
 
     colBaseTypes[colNr] = static_cast<unsigned short int>(colType);
   	colAttributeTypes[colNr] = static_cast<unsigned short int>(colAttribute);
@@ -436,7 +487,7 @@ void FstStore::fstWrite(IFstTable &fstTable, const int compress) const
       case FstColumnType::CHARACTER:
       {
         colTypes[colNr] = 6;
-        std::unique_ptr<IStringWriter> stringWriterP(fstTable.GetStringWriter(colNr));
+        std::unique_ptr<IStringWriter> stringWriterP(fstTable.GetStringWriter(sourceCol));
      		IStringWriter* stringWriter = stringWriterP.get();  // TODO: keep writer as part of fstTable (don't create)
         fdsWriteCharVec_v6(myfile, stringWriter, compress, stringWriter->Encoding());   // column names
         break;
@@ -445,9 +496,9 @@ void FstStore::fstWrite(IFstTable &fstTable, const int compress) const
       case FstColumnType::FACTOR:
       {
         colTypes[colNr] = 7;
-        int* intP = fstTable.GetIntWriter(colNr);  // level values pointer
+        int* intP = fstTable.GetIntWriter(sourceCol);  // level values pointer
 
-        std::unique_ptr<IStringWriter> stringWriterP(fstTable.GetLevelWriter(colNr));
+        std::unique_ptr<IStringWriter> stringWriterP(fstTable.GetLevelWriter(sourceCol));
      		IStringWriter* stringWriter = stringWriterP.get();
         fdsWriteFactorVec_v7(myfile, intP, stringWriter, nrOfRows, compress, stringWriter->Encoding(), annotation, hasAnnotation);
         break;
@@ -456,7 +507,7 @@ void FstStore::fstWrite(IFstTable &fstTable, const int compress) const
       case FstColumnType::INT_32:
       {
         colTypes[colNr] = 8;
-        int* intP = fstTable.GetIntWriter(colNr);
+        int* intP = fstTable.GetIntWriter(sourceCol);
         fdsWriteIntVec_v8(myfile, intP, nrOfRows, compress, annotation, hasAnnotation);
         break;
       }
@@ -464,7 +515,7 @@ void FstStore::fstWrite(IFstTable &fstTable, const int compress) const
       case FstColumnType::DOUBLE_64:
       {
         colTypes[colNr] = 9;
-        double* doubleP = fstTable.GetDoubleWriter(colNr);
+        double* doubleP = fstTable.GetDoubleWriter(sourceCol);
         fdsWriteRealVec_v9(myfile, doubleP, nrOfRows, compress, annotation, hasAnnotation);
         break;
       }
@@ -472,7 +523,7 @@ void FstStore::fstWrite(IFstTable &fstTable, const int compress) const
       case FstColumnType::BOOL_2:
       {
         colTypes[colNr] = 10;
-        int* intP = fstTable.GetLogicalWriter(colNr);
+        int* intP = fstTable.GetLogicalWriter(sourceCol);
         fdsWriteLogicalVec_v10(myfile, intP, nrOfRows, compress, annotation, hasAnnotation);
         break;
       }
@@ -480,7 +531,7 @@ void FstStore::fstWrite(IFstTable &fstTable, const int compress) const
       case FstColumnType::INT_64:
       {
         colTypes[colNr] = 11;
-        long long* intP = fstTable.GetInt64Writer(colNr);
+        long long* intP = fstTable.GetInt64Writer(sourceCol);
         fdsWriteInt64Vec_v11(myfile, intP, nrOfRows, compress, annotation, hasAnnotation);
         break;
       }
@@ -488,7 +539,7 @@ void FstStore::fstWrite(IFstTable &fstTable, const int compress) const
 	  case FstColumnType::BYTE:
 	  {
 		  colTypes[colNr] = 12;
-		  char* byteP = fstTable.GetByteWriter(colNr);
+		  char* byteP = fstTable.GetByteWriter(sourceCol);
 		  fdsWriteByteVec_v12(myfile, byteP, nrOfRows, compress, annotation, hasAnnotation);
 		  break;
 	  }
@@ -496,7 +547,7 @@ void FstStore::fstWrite(IFstTable &fstTable, const int compress) const
     case FstColumnType::BYTE_BLOCK:
     {
         colTypes[colNr] = 13;
-        IByteBlockColumn* p_byte_block = fstTable.GetByteBlockWriter(colNr);
+        IByteBlockColumn* p_byte_block = fstTable.GetByteBlockWriter(sourceCol);
         fdsWriteByteBlockVec_v13(myfile, p_byte_block, nrOfRows, static_cast<uint32_t>(compress));
         break;
     }
@@ -511,7 +562,7 @@ void FstStore::fstWrite(IFstTable &fstTable, const int compress) const
   *p_chunksetHash = ZSTD_XXH64(&metaDataWriteBlock[tableHeaderSize + keyIndexHeaderSize + 8], chunksetHeaderSize - 8, FST_HASH_SEED);
   *p_chunkIndexHash = ZSTD_XXH64(&chunkIndex[8], CHUNK_INDEX_SIZE - 8, FST_HASH_SEED);
 
-  myfile.seekp(0);
+  myfile.seekp(writeStart);
   myfile.write(metaDataWriteBlock, metaDataSize);  // table header
 
   *p_chunkDataHash = ZSTD_XXH64(&chunkIndex[CHUNK_INDEX_SIZE + 8], chunkIndexSize - (CHUNK_INDEX_SIZE + 8), FST_HASH_SEED);
@@ -528,7 +579,19 @@ void FstStore::fstWrite(IFstTable &fstTable, const int compress) const
 	  throw(runtime_error("There was an error during the write operation, fst file might be corrupted. Please check available disk space and access rights."));
   }
 
+  // Publish only after the complete new data and metadata have reached the OS.
+  myfile.flush();
+  if (!myfile) throw runtime_error(existing ?
+    "Unable to flush appended fst data; original header was not changed." : "Unable to flush fst data.");
+  if (existing)
+  {
+    myfile.seekp(0);
+    myfile.write(metaDataWriteBlock, TABLE_META_SIZE);
+    myfile.flush();
+    if (!myfile) throw runtime_error("Unable to publish fst header; file may require recovery.");
+  }
   myfile.close();
+  if (myfile.fail()) throw runtime_error("Unable to close fst file after writing.");
 }
 
 
@@ -564,6 +627,7 @@ void FstStore::fstMeta(IColumnFactory* columnFactory, IStringColumn* col_names)
   metaDataBlock = metaDataBlockP.get();
 
   myfile.read(metaDataBlock, metaSize);
+  if (!myfile) throw runtime_error(FSTERROR_DAMAGED_HEADER);
 
   if (keyLength != 0)
   {
@@ -623,10 +687,23 @@ void FstStore::fstMeta(IColumnFactory* columnFactory, IStringColumn* col_names)
   }
 
   // Read column names
-  const unsigned long long colNamesOffset = metaSize + TABLE_META_SIZE;
+  const unsigned long long colNamesOffset = static_cast<unsigned long long>(myfile.tellg());
 
   col_names->AllocateVec(static_cast<unsigned int>(nrOfCols));
   fdsReadCharVec_v6(myfile, col_names, colNamesOffset, 0, static_cast<unsigned int>(nrOfCols), static_cast<unsigned int>(nrOfCols));
+
+  // Preserve compressed column offsets without reading column payloads.
+  const uint64_t indexSize = CHUNK_INDEX_SIZE + DATA_INDEX_SIZE + 8ULL * nrOfCols;
+  std::vector<char> index(indexSize);
+  myfile.read(index.data(), indexSize);
+  uint64_t indexHash, dataHash;
+  memcpy(&indexHash, index.data(), 8);
+  memcpy(&dataHash, index.data() + CHUNK_INDEX_SIZE, 8);
+  if (!myfile || indexHash != ZSTD_XXH64(index.data() + 8, CHUNK_INDEX_SIZE - 8, FST_HASH_SEED) ||
+      dataHash != ZSTD_XXH64(index.data() + CHUNK_INDEX_SIZE + 8, indexSize - CHUNK_INDEX_SIZE - 8, FST_HASH_SEED))
+    throw runtime_error(FSTERROR_DAMAGED_CHUNKINDEX);
+  columnPositions.resize(nrOfCols);
+  if (nrOfCols) memcpy(columnPositions.data(), index.data() + CHUNK_INDEX_SIZE + DATA_INDEX_SIZE, 8ULL * nrOfCols);
 
   // cleanup
   myfile.close();
@@ -666,6 +743,7 @@ void FstStore::fstRead(IFstTable &tableReader, IStringArray* columnSelection, co
   metaDataBlock = metaDataBlockP.get();
 
   myfile.read(metaDataBlock, metaSize);
+  if (!myfile) throw runtime_error(FSTERROR_DAMAGED_HEADER);
 
   int* keyColPos = reinterpret_cast<int*>(&metaDataBlock[8]);  // TODO: why not unsigned ?
 
@@ -727,7 +805,7 @@ void FstStore::fstRead(IFstTable &tableReader, IStringArray* columnSelection, co
 
   // Column names
 
-  const unsigned long long colNamesOffset = metaSize + TABLE_META_SIZE;
+  const unsigned long long colNamesOffset = static_cast<unsigned long long>(myfile.tellg());
 
   // blockReaderP = std::unique_ptr<IStringColumn>(columnFactory->CreateStringColumn(nrOfCols, FstColumnAttribute::NONE));
   // blockReader = blockReaderP.get();

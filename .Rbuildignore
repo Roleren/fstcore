@@ -13,3 +13,6 @@
 ^docs$
 ^CRAN-RELEASE$
 ^CRAN-SUBMISSION$
+
+^COLUMN_APPEND\.md$
+^src/.*\.(a|o|so)$

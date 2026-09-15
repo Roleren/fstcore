@@ -40,4 +40,7 @@ SEXP fstmetadata(Rcpp::String fileName);
 SEXP fstretrieve(Rcpp::String fileName, SEXP columnSelection, SEXP startRow, SEXP endRow);
 
 
+// [[Rcpp::export(rng = false)]]
+SEXP fstappend(Rcpp::String fileName, SEXP table, SEXP compression, SEXP uniformEncoding);
+
 #endif  // FASTSTORE_H

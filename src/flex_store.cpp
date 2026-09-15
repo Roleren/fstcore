@@ -21,6 +21,9 @@
 #include <vector>
 #include <cstring>
 #include <memory>
+#include <limits>
+#include <set>
+#include <fst_append_lock.h>
 
 #include <Rcpp.h>
 
@@ -34,6 +37,7 @@
 #include <fst_table.h>
 #include <fst_column.h>
 #include <fst_column_factory.h>
+#include <fst_blockrunner_char.h>
 #include <fst_string_vector_container.h>
 
 #include <flex_store.h>
@@ -309,4 +313,52 @@ SEXP fstretrieve(String fileName, SEXP columnSelection, SEXP startRow, SEXP endR
     _["keyNames"]   = keyNames,
     _["keyIndex"]   = keyIndex,
     _["resTable"]   = tableReader.ResTable());
+}
+
+SEXP fstappend(String fileName, SEXP table, SEXP compression, SEXP uniformEncoding)
+{
+  if (!Rf_inherits(table, "data.frame") || Rf_length(table) == 0)
+    return fst_error("Please supply a data frame with at least one new column.");
+  if (TYPEOF(compression) != INTSXP || XLENGTH(compression) != 1 ||
+      INTEGER(compression)[0] == NA_INTEGER || INTEGER(compression)[0] < 0 || INTEGER(compression)[0] > 100)
+    return fst_error("Parameter compress must be a single integer between 0 and 100.");
+  if (TYPEOF(uniformEncoding) != LGLSXP || XLENGTH(uniformEncoding) != 1 || LOGICAL(uniformEncoding)[0] == NA_LOGICAL)
+    return fst_error("Parameter uniform_encoding must be TRUE or FALSE.");
+
+  try {
+    FstAppendLock lock(fileName.get_cstring());
+    List namesContainer(1), tableContainer(1);
+    StringVectorContainer oldNames(namesContainer);
+    ColumnFactory factory;
+    FstStore store(fileName.get_cstring());
+    store.fstMeta(&factory, &oldNames);
+    if (Rf_length(table) > std::numeric_limits<int>::max() - store.nrOfCols)
+      return fst_error("Too many columns.");
+    SEXP newNames = Rf_getAttrib(table, R_NamesSymbol);
+    if (TYPEOF(newNames) != STRSXP || XLENGTH(newNames) != XLENGTH(table))
+      return fst_error("New columns must have unique, non-empty names.");
+    CharacterVector allNames(store.nrOfCols + Rf_length(table));
+    std::set<std::string> names;
+    for (int i = 0; i < store.nrOfCols; ++i) {
+      SEXP name = STRING_ELT(oldNames.StrVector(), i);
+      if (name == NA_STRING || !names.insert(Rf_translateCharUTF8(name)).second || LENGTH(name) == 0)
+        return fst_error("Existing columns must have unique, non-empty names.");
+      allNames[i] = Rf_mkCharCE(Rf_translateCharUTF8(name), CE_UTF8);
+    }
+    for (int i = 0; i < Rf_length(table); ++i) {
+      SEXP name = STRING_ELT(newNames, i);
+      if (name == NA_STRING || LENGTH(name) == 0 || !names.insert(Rf_translateCharUTF8(name)).second)
+        return fst_error("New column names must be unique, non-empty, and absent from the fst file.");
+      if (static_cast<uint64_t>(XLENGTH(VECTOR_ELT(table, i))) != *store.p_nrOfRows)
+        return fst_error("New columns must have the same number of rows as the fst file.");
+      allNames[store.nrOfCols + i] = Rf_mkCharCE(Rf_translateCharUTF8(name), CE_UTF8);
+    }
+    FstTable newTable(table, LOGICAL(uniformEncoding)[0], tableContainer);
+    SEXP combinedNames = allNames;
+    BlockWriterChar nameWriter(combinedNames, allNames.size(), MAX_CHAR_STACK_SIZE, true);
+    store.fstAppend(newTable, INTEGER(compression)[0], &nameWriter);
+  } catch (const std::exception& e) {
+    return fst_error(e.what());
+  }
+  return R_NilValue;
 }
