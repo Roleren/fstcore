@@ -1,0 +1,13 @@
+context("native multiple intervals")
+test_that("native reads preserve all intervals and validate selectors", {
+  path <- tempfile(); on.exit(unlink(path))
+  fstcore:::fststore(path, data.frame(a = 1:100), 50L, TRUE)
+  result <- fstcore:::fstretrieve(path, NULL, c(90, 2, 2), c(91, 3, 2))
+  expect_identical(result$resTable$a, c(90:91, 2:3, 2L))
+  for (bad in list(NULL, numeric(), c(1, NA), c(1, 1.1), c(1, Inf), -1, 0, "1"))
+    expect_s3_class(fstcore:::fstretrieve(path, NULL, bad, NULL), "fst_error")
+  expect_s3_class(fstcore:::fstretrieve(path, NULL, c(1, 2), 5), "fst_error")
+  expect_s3_class(fstcore:::fstretrieve(path, NULL, c(1, 2), c(2, 1)), "fst_error")
+  expect_s3_class(fstcore:::fstretrieve(path, NA_character_, 1, 2), "fst_error")
+  expect_identical(fstcore:::fstretrieve(path, NULL, numeric(), numeric())$resTable$a, integer())
+})

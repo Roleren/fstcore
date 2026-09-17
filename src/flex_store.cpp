@@ -213,8 +213,46 @@ SEXP fstmetadata(String fileName)
 }
 
 
-SEXP fstretrieve(String fileName, SEXP columnSelection, SEXP startRow, SEXP endRow)
+SEXP fstretrieve(String fileName, SEXP columnSelection, SEXP startRow, SEXP endRow, SEXP mergeGap)
 {
+  // Validate before allocating/protecting R containers. Never silently consume
+  // just the first element, round fractional indexes, or dereference empties.
+  auto numeric = [](SEXP x) { return TYPEOF(x) == INTSXP || TYPEOF(x) == REALSXP; };
+  auto number = [](SEXP x, R_xlen_t i) -> double {
+    if (TYPEOF(x) == REALSXP) return REAL(x)[i];
+    return INTEGER(x)[i] == NA_INTEGER ? NA_REAL : static_cast<double>(INTEGER(x)[i]);
+  };
+  auto valid = [](double x, double minimum) {
+    return R_FINITE(x) && x >= minimum && x <= 9007199254740992.0 && x == std::floor(x);
+  };
+  if (!numeric(startRow) || (!Rf_isNull(endRow) && (!numeric(endRow) || XLENGTH(endRow) != XLENGTH(startRow))))
+    return fst_error("Parameters from and to must be numeric vectors of equal length.");
+  if (Rf_isNull(endRow) && XLENGTH(startRow) != 1)
+    return fst_error("Parameter to may be NULL only for a single starting row.");
+  if (!Rf_isNull(columnSelection) && TYPEOF(columnSelection) != STRSXP)
+    return fst_error("Parameter columns must be a character vector.");
+  if (!Rf_isNull(columnSelection)) {
+    for (R_xlen_t i = 0; i < XLENGTH(columnSelection); ++i)
+      if (STRING_ELT(columnSelection, i) == NA_STRING) return fst_error("Column names must not be NA.");
+  }
+  int64_t merge = -1;
+  if (!Rf_isNull(mergeGap)) {
+    if (!numeric(mergeGap) || XLENGTH(mergeGap) != 1 || !valid(number(mergeGap, 0), 0))
+      return fst_error("Parameter merge_gap must be NULL or a non-negative whole number.");
+    merge = static_cast<int64_t>(number(mergeGap, 0));
+  }
+  std::vector<FstReadRange> ranges;
+  const bool multiple = XLENGTH(startRow) != 1;
+  if (multiple) ranges.reserve(XLENGTH(startRow));
+  int64_t sRow = 1, eRow = -1;
+  for (R_xlen_t i = 0; i < XLENGTH(startRow); ++i) {
+    const double from = number(startRow, i);
+    const double to = Rf_isNull(endRow) ? from : number(endRow, i);
+    if (!valid(from, 1) || !valid(to, 1) || to < from)
+      return fst_error("Row endpoints must be finite positive whole numbers through 2^53, with from <= to.");
+    if (multiple) ranges.push_back({static_cast<uint64_t>(from) - 1, static_cast<uint64_t>(to), 0});
+    else { sRow = static_cast<int64_t>(from); if (!Rf_isNull(endRow)) eRow = static_cast<int64_t>(to); }
+  }
   // avoid using PROTECT statements in C++ classes (which generate rchk errors)
   // this PROTECTED container can be used to hold any R object safely
   SEXP r_container = PROTECT(Rf_allocVector(VECSXP, 1));
@@ -228,30 +266,6 @@ SEXP fstretrieve(String fileName, SEXP columnSelection, SEXP startRow, SEXP endR
 
   std::unique_ptr<IColumnFactory> columnFactory(new ColumnFactory());
   FstStore fstStore(fileName.get_cstring());
-
-  int64_t sRow = 0;
-
-  if (Rf_isInteger(startRow)) {
-    sRow = (int64_t)(*INTEGER(startRow));
-  } else if (Rf_isReal(startRow)) {
-    sRow = (int64_t)(0.5 + *REAL(startRow));
-  } else {
-    return fst_error("Parameter 'from' should be a positive numeric value");
-  }
-
-  // Set to last row
-  int64_t eRow = -1;
-
-  if (!Rf_isNull(endRow))
-  {
-    if (Rf_isInteger(endRow)) {
-    eRow = (int64_t)(*INTEGER(endRow));
-    } else if (Rf_isReal(endRow)) {
-      eRow = (int64_t)(round(*REAL(endRow)));
-    } else {
-      return fst_error("Parameter 'to' should be a positive numeric value or NULL");
-    }
-  }
 
   vector<int> keyIndex;
 
@@ -267,7 +281,8 @@ SEXP fstretrieve(String fileName, SEXP columnSelection, SEXP startRow, SEXP endR
 
   try
   {
-    fstStore.fstRead(tableReader, colSelection.get(), sRow, eRow, columnFactory.get(), keyIndex, &*colNames, col_names.get());
+    fstStore.fstRead(tableReader, colSelection.get(), sRow, eRow, columnFactory.get(), keyIndex,
+      &*colNames, col_names.get(), multiple ? &ranges : nullptr, merge);
   }
   catch (const std::runtime_error& e)
   {

@@ -37,7 +37,7 @@ SEXP fstmetadata(Rcpp::String fileName);
 
 
 // [[Rcpp::export(rng = false)]]
-SEXP fstretrieve(Rcpp::String fileName, SEXP columnSelection, SEXP startRow, SEXP endRow);
+SEXP fstretrieve(Rcpp::String fileName, SEXP columnSelection, SEXP startRow, SEXP endRow, SEXP mergeGap = R_NilValue);
 
 
 // [[Rcpp::export(rng = false)]]

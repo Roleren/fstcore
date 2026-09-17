@@ -46,6 +46,7 @@
 using namespace std;
 
 #include <interface/row_segment_reader.h>
+#include <interface/selected_column_reader.h>
 
 
 // Table header [node A] [size: 48]
@@ -803,7 +804,8 @@ void FstStore::fstMeta(IColumnFactory* columnFactory, IStringColumn* col_names)
 
 
 void FstStore::fstRead(IFstTable &tableReader, IStringArray* columnSelection, const int64_t startRow, const int64_t endRow,
-  IColumnFactory* columnFactory, vector<int> &keyIndex, IStringArray* selectedCols, IStringColumn* col_names)
+  IColumnFactory* columnFactory, vector<int> &keyIndex, IStringArray* selectedCols, IStringColumn* col_names,
+  const std::vector<FstReadRange>* ranges, int64_t mergeGap)
 {
   // fst file stream using a stack buffer
   ifstream myfile;
@@ -1016,7 +1018,7 @@ void FstStore::fstRead(IFstTable &tableReader, IStringArray* columnSelection, co
   const long long firstRow = startRow - 1;
   const uint64_t nrOfRows = *p_chunkRows;  // TODO: check for row numbers > INT_MAX !!!
 
-  if (nrOfRows != 0 && (firstRow >= static_cast<long long>(nrOfRows) || firstRow < 0))
+  if (!ranges && nrOfRows != 0 && (firstRow >= static_cast<long long>(nrOfRows) || firstRow < 0))
   {
     myfile.close();
 
@@ -1031,7 +1033,7 @@ void FstStore::fstRead(IFstTable &tableReader, IStringArray* columnSelection, co
   long long length = max(static_cast<long long>(nrOfRows) - firstRow, 0LL);
 
   // Determine vector length
-  if (endRow != -1)
+  if (!ranges && endRow != -1)
   {
     if (static_cast<long long>(endRow) <= firstRow)
     {
@@ -1042,6 +1044,28 @@ void FstStore::fstRead(IFstTable &tableReader, IStringArray* columnSelection, co
     length = max(min(endRow - firstRow, static_cast<long long>(nrOfRows) - firstRow), 0LL);
   }
 
+  std::vector<FstReadRange> selected;
+  bool orderedSelection = true;
+  FstReadPlan readPlan;
+  if (ranges) {
+    uint64_t count = 0, previous = 0;
+    selected.reserve(ranges->size());
+    for (const auto& r : *ranges) {
+      if (r.end <= r.first || (nrOfRows && r.first >= nrOfRows))
+        throw runtime_error("Row selection is out of range or has reversed endpoints.");
+      const uint64_t end = std::min(r.end, nrOfRows);
+      if (end <= r.first) continue;
+      const uint64_t n = end - r.first;
+      if (n > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) - count)
+        throw runtime_error("Selected row count is too large.");
+      if (count && r.first < previous) orderedSelection = false;
+      previous = end - 1;
+      selected.push_back({r.first, end, count}); count += n;
+    }
+    length = count;
+    auto less = [](const FstReadRange& a, const FstReadRange& b) { return a.first < b.first; };
+    if (!std::is_sorted(selected.begin(), selected.end(), less)) std::stable_sort(selected.begin(), selected.end(), less);
+  }
   tableReader.InitTable(nrOfSelect, length);
 
   for (int colSel = 0; colSel < nrOfSelect; ++colSel)
@@ -1056,6 +1080,17 @@ void FstStore::fstRead(IFstTable &tableReader, IStringArray* columnSelection, co
 
     const uint64_t pos = blockPos[colNr];
     const short int scale = colScales[colNr];
+
+    if (ranges) {
+      uint64_t block = BLOCKSIZE_INT;
+      if (colTypes[colNr] == 6) block = BLOCKSIZE_CHAR;
+      else if (colTypes[colNr] == 9) block = BLOCKSIZE_REAL;
+      else if (colTypes[colNr] == 11) block = BLOCKSIZE_INT64;
+      else if (colTypes[colNr] == 12) block = BLOCKSIZE_BYTE;
+      readPlan.prepare(selected, columnSegments[colNr], block, mergeGap);
+      readSelectedColumn(tableReader, columnFactory, myfile, colNr, colSel, length, readPlan);
+      continue;
+    }
 
     if (tableVersionMax == FST_ROWS_VERSION) {
       readSegmentedColumn(tableReader, columnFactory, myfile, colNr, colSel, firstRow, length);
@@ -1179,6 +1214,7 @@ void FstStore::fstRead(IFstTable &tableReader, IStringArray* columnSelection, co
 
   // Key index
   SetKeyIndex(keyIndex, keyLength, nrOfSelect, keyColPos, colIndex);
+  if (!orderedSelection) keyIndex.clear();
 
   // TODO: if all columns are selected, no copy is required!
 

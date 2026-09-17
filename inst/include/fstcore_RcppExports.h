@@ -84,16 +84,16 @@ namespace fstcore {
         return Rcpp::as<SEXP >(rcpp_result_gen);
     }
 
-    inline SEXP fstretrieve(Rcpp::String fileName, SEXP columnSelection, SEXP startRow, SEXP endRow) {
-        typedef SEXP(*Ptr_fstretrieve)(SEXP,SEXP,SEXP,SEXP);
+    inline SEXP fstretrieve(Rcpp::String fileName, SEXP columnSelection, SEXP startRow, SEXP endRow, SEXP mergeGap = R_NilValue) {
+        typedef SEXP(*Ptr_fstretrieve)(SEXP,SEXP,SEXP,SEXP,SEXP);
         static Ptr_fstretrieve p_fstretrieve = NULL;
         if (p_fstretrieve == NULL) {
-            validateSignature("SEXP(*fstretrieve)(Rcpp::String,SEXP,SEXP,SEXP)");
+            validateSignature("SEXP(*fstretrieve)(Rcpp::String,SEXP,SEXP,SEXP,SEXP)");
             p_fstretrieve = (Ptr_fstretrieve)R_GetCCallable("fstcore", "_fstcore_fstretrieve");
         }
         RObject rcpp_result_gen;
         {
-            rcpp_result_gen = p_fstretrieve(Shield<SEXP>(Rcpp::wrap(fileName)), Shield<SEXP>(Rcpp::wrap(columnSelection)), Shield<SEXP>(Rcpp::wrap(startRow)), Shield<SEXP>(Rcpp::wrap(endRow)));
+            rcpp_result_gen = p_fstretrieve(Shield<SEXP>(Rcpp::wrap(fileName)), Shield<SEXP>(Rcpp::wrap(columnSelection)), Shield<SEXP>(Rcpp::wrap(startRow)), Shield<SEXP>(Rcpp::wrap(endRow)), Shield<SEXP>(Rcpp::wrap(mergeGap)));
         }
         if (rcpp_result_gen.inherits("interrupted-error"))
             throw Rcpp::internal::InterruptedException();

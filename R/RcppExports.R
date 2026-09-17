@@ -13,8 +13,8 @@ fstmetadata <- function(fileName) {
     .Call(`_fstcore_fstmetadata`, fileName)
 }
 
-fstretrieve <- function(fileName, columnSelection, startRow, endRow) {
-    .Call(`_fstcore_fstretrieve`, fileName, columnSelection, startRow, endRow)
+fstretrieve <- function(fileName, columnSelection, startRow, endRow, mergeGap = NULL) {
+    .Call(`_fstcore_fstretrieve`, fileName, columnSelection, startRow, endRow, mergeGap)
 }
 
 fstappend <- function(fileName, table, compression, uniformEncoding) {

@@ -115,22 +115,23 @@ RcppExport SEXP _fstcore_fstmetadata(SEXP fileNameSEXP) {
     return rcpp_result_gen;
 }
 // fstretrieve
-SEXP fstretrieve(Rcpp::String fileName, SEXP columnSelection, SEXP startRow, SEXP endRow);
-static SEXP _fstcore_fstretrieve_try(SEXP fileNameSEXP, SEXP columnSelectionSEXP, SEXP startRowSEXP, SEXP endRowSEXP) {
+SEXP fstretrieve(Rcpp::String fileName, SEXP columnSelection, SEXP startRow, SEXP endRow, SEXP mergeGap);
+static SEXP _fstcore_fstretrieve_try(SEXP fileNameSEXP, SEXP columnSelectionSEXP, SEXP startRowSEXP, SEXP endRowSEXP, SEXP mergeGapSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::traits::input_parameter< Rcpp::String >::type fileName(fileNameSEXP);
     Rcpp::traits::input_parameter< SEXP >::type columnSelection(columnSelectionSEXP);
     Rcpp::traits::input_parameter< SEXP >::type startRow(startRowSEXP);
     Rcpp::traits::input_parameter< SEXP >::type endRow(endRowSEXP);
-    rcpp_result_gen = Rcpp::wrap(fstretrieve(fileName, columnSelection, startRow, endRow));
+    Rcpp::traits::input_parameter< SEXP >::type mergeGap(mergeGapSEXP);
+    rcpp_result_gen = Rcpp::wrap(fstretrieve(fileName, columnSelection, startRow, endRow, mergeGap));
     return rcpp_result_gen;
 END_RCPP_RETURN_ERROR
 }
-RcppExport SEXP _fstcore_fstretrieve(SEXP fileNameSEXP, SEXP columnSelectionSEXP, SEXP startRowSEXP, SEXP endRowSEXP) {
+RcppExport SEXP _fstcore_fstretrieve(SEXP fileNameSEXP, SEXP columnSelectionSEXP, SEXP startRowSEXP, SEXP endRowSEXP, SEXP mergeGapSEXP) {
     SEXP rcpp_result_gen;
     {
-        rcpp_result_gen = PROTECT(_fstcore_fstretrieve_try(fileNameSEXP, columnSelectionSEXP, startRowSEXP, endRowSEXP));
+        rcpp_result_gen = PROTECT(_fstcore_fstretrieve_try(fileNameSEXP, columnSelectionSEXP, startRowSEXP, endRowSEXP, mergeGapSEXP));
     }
     Rboolean rcpp_isInterrupt_gen = Rf_inherits(rcpp_result_gen, "interrupted-error");
     if (rcpp_isInterrupt_gen) {
@@ -541,7 +542,7 @@ static int _fstcore_RcppExport_validate(const char* sig) {
         signatures.insert("int(*fstlib_version)()");
         signatures.insert("SEXP(*fststore)(Rcpp::String,SEXP,SEXP,SEXP)");
         signatures.insert("SEXP(*fstmetadata)(Rcpp::String)");
-        signatures.insert("SEXP(*fstretrieve)(Rcpp::String,SEXP,SEXP,SEXP)");
+        signatures.insert("SEXP(*fstretrieve)(Rcpp::String,SEXP,SEXP,SEXP,SEXP)");
         signatures.insert("SEXP(*fstappend)(Rcpp::String,SEXP,SEXP,SEXP)");
         signatures.insert("SEXP(*fstappendrows)(Rcpp::String,SEXP,SEXP,SEXP)");
         signatures.insert("SEXP(*fstreplacecolumns)(Rcpp::String,SEXP,SEXP,SEXP)");
@@ -582,7 +583,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_fstcore_fstlib_version", (DL_FUNC) &_fstcore_fstlib_version, 0},
     {"_fstcore_fststore", (DL_FUNC) &_fstcore_fststore, 4},
     {"_fstcore_fstmetadata", (DL_FUNC) &_fstcore_fstmetadata, 1},
-    {"_fstcore_fstretrieve", (DL_FUNC) &_fstcore_fstretrieve, 4},
+    {"_fstcore_fstretrieve", (DL_FUNC) &_fstcore_fstretrieve, 5},
     {"_fstcore_fstappend", (DL_FUNC) &_fstcore_fstappend, 4},
     {"_fstcore_fstappendrows", (DL_FUNC) &_fstcore_fstappendrows, 4},
     {"_fstcore_fstreplacecolumns", (DL_FUNC) &_fstcore_fstreplacecolumns, 4},

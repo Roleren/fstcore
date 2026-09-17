@@ -24,6 +24,7 @@
 #include <interface/istringwriter.h>
 #include <memory>
 #include <fstream>
+#include <interface/row_selection.h>
 
 #include <interface/icolumnfactory.h>
 #include <interface/ifsttable.h>
@@ -40,6 +41,9 @@ class FstStore
 
   void readSegmentedColumn(IFstTable& table, IColumnFactory* factory,
     std::ifstream& file, int col, int outputCol, uint64_t first, uint64_t length);
+
+  void readSelectedColumn(IFstTable& table, IColumnFactory* factory,
+    std::ifstream& file, int col, int outputCol, uint64_t length, const FstReadPlan& plan);
 
   public:
     struct RowSegment { uint64_t start, rows, position; };
@@ -84,7 +88,8 @@ class FstStore
     void fstMeta(IColumnFactory* columnFactory, IStringColumn* col_names);
 
     void fstRead(IFstTable &tableReader, IStringArray* columnSelection, int64_t startRow, int64_t endRow,
-      IColumnFactory* columnFactory, std::vector<int> &keyIndex, IStringArray* selectedCols, IStringColumn* col_names);
+      IColumnFactory* columnFactory, std::vector<int> &keyIndex, IStringArray* selectedCols, IStringColumn* col_names,
+      const std::vector<FstReadRange>* ranges = nullptr, int64_t mergeGap = -1);
 };
 
 
