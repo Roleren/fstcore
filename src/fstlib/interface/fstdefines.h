@@ -30,6 +30,7 @@
 // Note that the release version number can change without affecting read/write cycles
 #define FST_VERSION          (FST_VERSION_MAJOR * 256 + FST_VERSION_MINOR)
 #define FST_APPEND_VERSION   2 // fork extension: relocated metadata
+#define FST_ROWS_VERSION     3 // fork extension: per-column row-segment manifest
 #define FST_COMPRESS_VERSION 1
 
 #define FST_MAGIC_NUMBER     0x50414150         // magic number and signature of the fst format

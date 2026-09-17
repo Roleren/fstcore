@@ -15,4 +15,5 @@
 ^CRAN-SUBMISSION$
 
 ^COLUMN_APPEND\.md$
+^ROW_APPEND\.md$
 ^src/.*\.(a|o|so)$

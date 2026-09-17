@@ -23,7 +23,9 @@
 #include <memory>
 #include <limits>
 #include <set>
+#include <map>
 #include <fst_append_lock.h>
+#include <character/character_v6.h>
 
 #include <Rcpp.h>
 
@@ -357,6 +359,175 @@ SEXP fstappend(String fileName, SEXP table, SEXP compression, SEXP uniformEncodi
     SEXP combinedNames = allNames;
     BlockWriterChar nameWriter(combinedNames, allNames.size(), MAX_CHAR_STACK_SIZE, true);
     store.fstAppend(newTable, INTEGER(compression)[0], &nameWriter);
+  } catch (const std::exception& e) {
+    return fst_error(e.what());
+  }
+  return R_NilValue;
+}
+
+// Validate schema payloads before a replacement writes any bytes. Full-column
+// replacement still requires the same dictionary/timezone: no schema migration.
+static void validateReplacementSchema(FstStore& store, FstTable& table, int source, int target,
+  SEXP value, ifstream& file, List& levelsContainer)
+{
+  FstColumnAttribute attribute; short scale = 0; std::string annotation; bool annotated;
+  const auto type = table.ColumnType(source, attribute, scale, annotation, annotated);
+  if (static_cast<unsigned>(type) != store.colBaseTypes[target] ||
+      static_cast<unsigned>(attribute) != store.colAttributeTypes[target] ||
+      static_cast<unsigned short>(scale) != store.colScales[target] || type == FstColumnType::BYTE_BLOCK)
+    throw std::runtime_error("Replacement columns must have identical stored types, attributes and scales; no coercion is performed.");
+  const uint64_t position = store.columnPositions[target];
+  if (type == FstColumnType::FACTOR) {
+    char header[16] = {}; file.seekg(position); file.read(header, 16);
+    uint32_t version, count;
+    std::memcpy(&version, header, 4); std::memcpy(&count, header + 4, 4);
+    if (!file || version > 1) throw std::runtime_error("Damaged factor header.");
+    SEXP incomingLevels = Rf_getAttrib(value, R_LevelsSymbol);
+    if (TYPEOF(incomingLevels) != STRSXP || static_cast<uint64_t>(XLENGTH(incomingLevels)) != count)
+      throw std::runtime_error("Replacement factors must have identical levels in the same order.");
+    StringVectorContainer levels(levelsContainer);
+    levels.AllocateVec(count);
+    if (count) fdsReadCharVec_v6(file, &levels, position + 16, 0, count, count);
+    if (!file || !R_compute_identical(levels.StrVector(), incomingLevels, 16))
+      throw std::runtime_error("Replacement factors must have identical levels in the same order.");
+  }
+  if (attribute == FstColumnAttribute::INT_32_TIMESTAMP_SECONDS ||
+      attribute == FstColumnAttribute::DOUBLE_64_TIMESTAMP_SECONDS) {
+    uint32_t size = 0; file.seekg(position); file.read(reinterpret_cast<char*>(&size), 4);
+    const bool oldAnnotated = (size & 0x80000000U) != 0;
+    size &= 0x7fffffffU;
+    if (!file || oldAnnotated != annotated || size != annotation.size())
+      throw std::runtime_error("Replacement timestamps must have identical timezones.");
+    std::string oldAnnotation(size, '\0');
+    if (size) file.read(&oldAnnotation[0], size);
+    if (!file || oldAnnotation != annotation)
+      throw std::runtime_error("Replacement timestamps must have identical timezones.");
+  }
+}
+
+SEXP fstreplacecolumns(String fileName, SEXP table, SEXP compression, SEXP uniformEncoding)
+{
+  if (TYPEOF(table) != VECSXP || XLENGTH(table) == 0 || XLENGTH(table) > std::numeric_limits<int>::max())
+    return fst_error("Please supply a non-empty data frame or named list of replacement columns.");
+  if (TYPEOF(compression) != INTSXP || XLENGTH(compression) != 1 ||
+      INTEGER(compression)[0] == NA_INTEGER || INTEGER(compression)[0] < 0 || INTEGER(compression)[0] > 100)
+    return fst_error("Parameter compress must be a single integer between 0 and 100.");
+  if (TYPEOF(uniformEncoding) != LGLSXP || XLENGTH(uniformEncoding) != 1 || LOGICAL(uniformEncoding)[0] == NA_LOGICAL)
+    return fst_error("Parameter uniform_encoding must be TRUE or FALSE.");
+  try {
+    FstAppendLock lock(fileName.get_cstring());
+    List namesContainer(1), tableContainer(1), levelsContainer(1);
+    StringVectorContainer oldNames(namesContainer);
+    ColumnFactory factory;
+    FstStore store(fileName.get_cstring());
+    store.fstMeta(&factory, &oldNames);
+    SEXP newNames = Rf_getAttrib(table, R_NamesSymbol);
+    if (TYPEOF(newNames) != STRSXP || XLENGTH(newNames) != XLENGTH(table))
+      return fst_error("Replacement columns must have unique, non-empty names.");
+    std::map<std::string, int> existing;
+    for (int col = 0; col < store.nrOfCols; ++col) {
+      SEXP name = STRING_ELT(oldNames.StrVector(), col);
+      if (name == NA_STRING || LENGTH(name) == 0 ||
+          !existing.emplace(Rf_translateCharUTF8(name), col).second)
+        return fst_error("Existing columns must have unique, non-empty names for replacement.");
+    }
+    std::vector<int> replacements(store.nrOfCols, -1);
+    FstTable newTable(table, LOGICAL(uniformEncoding)[0], tableContainer);
+    ifstream file(fileName.get_cstring(), ios::binary);
+    for (int source = 0; source < Rf_length(table); ++source) {
+      SEXP name = STRING_ELT(newNames, source);
+      if (name == NA_STRING || LENGTH(name) == 0)
+        return fst_error("Replacement columns must have unique, non-empty names.");
+      const std::string utf8Name = Rf_translateCharUTF8(name);
+      const auto found = existing.find(utf8Name);
+      if (found == existing.end())
+        throw std::runtime_error(std::string("Replacement column does not exist: ") + utf8Name);
+      const int target = found->second;
+      if (replacements[target] >= 0)
+        return fst_error("Replacement column names must be unique.");
+      replacements[target] = source;
+      SEXP value = VECTOR_ELT(table, source);
+      if (!Rf_isVectorAtomic(value) || !Rf_isNull(Rf_getAttrib(value, R_DimSymbol)))
+        return fst_error("Replacement columns must be atomic vectors without dimensions.");
+      if (static_cast<uint64_t>(XLENGTH(value)) != *store.p_nrOfRows)
+        return fst_error("Replacement columns must have the same number of rows as the fst file; no recycling is performed.");
+      try {
+        validateReplacementSchema(store, newTable, source, target, value, file, levelsContainer);
+      } catch (const std::runtime_error& e) {
+        throw std::runtime_error("Column '" + utf8Name + "': " + e.what());
+      }
+    }
+    SEXP allNames = oldNames.StrVector();
+    BlockWriterChar nameWriter(allNames, store.nrOfCols, MAX_CHAR_STACK_SIZE, false);
+    store.fstReplaceColumns(newTable, INTEGER(compression)[0], &nameWriter, replacements);
+  } catch (const std::exception& e) {
+    return fst_error(e.what());
+  }
+  return R_NilValue;
+}
+
+SEXP fstappendrows(String fileName, SEXP table, SEXP compression, SEXP uniformEncoding)
+{
+  if (TYPEOF(table) != VECSXP || Rf_length(table) == 0)
+    return fst_error("Please supply a non-empty data frame or named list of columns.");
+  if (TYPEOF(compression) != INTSXP || XLENGTH(compression) != 1 ||
+      INTEGER(compression)[0] == NA_INTEGER || INTEGER(compression)[0] < 0 || INTEGER(compression)[0] > 100)
+    return fst_error("Parameter compress must be a single integer between 0 and 100.");
+  if (TYPEOF(uniformEncoding) != LGLSXP || XLENGTH(uniformEncoding) != 1 || LOGICAL(uniformEncoding)[0] == NA_LOGICAL)
+    return fst_error("Parameter uniform_encoding must be TRUE or FALSE.");
+  try {
+    FstAppendLock lock(fileName.get_cstring());
+    List namesContainer(1), tableContainer(1), levelsContainer(1);
+    StringVectorContainer oldNames(namesContainer);
+    ColumnFactory factory;
+    FstStore store(fileName.get_cstring());
+    store.fstMeta(&factory, &oldNames);
+    SEXP newNames = Rf_getAttrib(table, R_NamesSymbol);
+    if (Rf_length(table) != store.nrOfCols || TYPEOF(newNames) != STRSXP || XLENGTH(newNames) != XLENGTH(table))
+      return fst_error("Row append requires the same column names in the same order.");
+    const R_xlen_t rows = XLENGTH(VECTOR_ELT(table, 0));
+    std::set<std::string> names;
+    FstTable newTable(table, LOGICAL(uniformEncoding)[0], tableContainer);
+    ifstream file(fileName.get_cstring(), ios::binary);
+    for (int col = 0; col < store.nrOfCols; ++col) {
+      SEXP name = STRING_ELT(newNames, col), oldName = STRING_ELT(oldNames.StrVector(), col);
+      if (name == NA_STRING || oldName == NA_STRING || LENGTH(name) == 0 ||
+          !names.insert(Rf_translateCharUTF8(name)).second ||
+          std::strcmp(Rf_translateCharUTF8(name), Rf_translateCharUTF8(oldName)) != 0)
+        return fst_error("Row append requires unique matching column names in the same order.");
+      SEXP value = VECTOR_ELT(table, col);
+      if (!Rf_isVectorAtomic(value) || !Rf_isNull(Rf_getAttrib(value, R_DimSymbol)) || XLENGTH(value) != rows)
+        return fst_error("Row append requires atomic columns of equal length without dimensions.");
+      FstColumnAttribute attribute; short scale = 0; std::string annotation; bool hasAnnotation;
+      const auto type = newTable.ColumnType(col, attribute, scale, annotation, hasAnnotation);
+      if (static_cast<unsigned>(type) != store.colBaseTypes[col] || static_cast<unsigned>(attribute) != store.colAttributeTypes[col] ||
+          static_cast<unsigned short>(scale) != store.colScales[col])
+        return fst_error("Row append requires identical column types, attributes and scales.");
+      const uint64_t position = store.columnPositions[col];
+      if (type == FstColumnType::FACTOR) {
+        char header[16] = {}; file.seekg(position); file.read(header, 16);
+        uint32_t version, count;
+        std::memcpy(&version, header, 4); std::memcpy(&count, header + 4, 4);
+        if (!file || version > 1) return fst_error("Damaged factor header.");
+        StringVectorContainer levels(levelsContainer);
+        levels.AllocateVec(count);
+        if (count) fdsReadCharVec_v6(file, &levels, position + 16, 0, count, count);
+        if (!R_compute_identical(levels.StrVector(), Rf_getAttrib(value, R_LevelsSymbol), 16))
+          return fst_error("Row append requires identical factor levels in the same order.");
+      }
+      if (attribute == FstColumnAttribute::INT_32_TIMESTAMP_SECONDS ||
+          attribute == FstColumnAttribute::DOUBLE_64_TIMESTAMP_SECONDS) {
+        uint32_t annotationSize = 0; file.seekg(position); file.read(reinterpret_cast<char*>(&annotationSize), 4);
+        const bool oldAnnotated = (annotationSize & 0x80000000U) != 0;
+        annotationSize &= 0x7fffffffU;
+        if (!file || oldAnnotated != hasAnnotation || annotationSize != annotation.size())
+          return fst_error("Row append requires identical timestamp timezones.");
+        std::string oldAnnotation(annotationSize, '\0');
+        if (annotationSize) file.read(&oldAnnotation[0], annotationSize);
+        if (!file || oldAnnotation != annotation) return fst_error("Row append requires identical timestamp timezones.");
+      }
+    }
+    store.fstAppendRows(newTable, INTEGER(compression)[0]);
   } catch (const std::exception& e) {
     return fst_error(e.what());
   }

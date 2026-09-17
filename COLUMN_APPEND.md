@@ -2,7 +2,7 @@
 
 This development fork adds `fstcore:::fstappend(path, data.frame, compression,
 uniformEncoding)` and exports the equivalent C-callable API for the fst package.
-The public R entry point is `fst::append_fst()` in the matching fst fork.
+The public R entry point is `fst::append_columns_fst()` in the matching fst fork.
 
 ## File layout
 

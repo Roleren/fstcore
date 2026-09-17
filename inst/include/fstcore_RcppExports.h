@@ -124,6 +124,46 @@ namespace fstcore {
         return Rcpp::as<SEXP >(rcpp_result_gen);
     }
 
+    inline SEXP fstappendrows(Rcpp::String fileName, SEXP table, SEXP compression, SEXP uniformEncoding) {
+        typedef SEXP(*Ptr_fstappendrows)(SEXP,SEXP,SEXP,SEXP);
+        static Ptr_fstappendrows p_fstappendrows = NULL;
+        if (p_fstappendrows == NULL) {
+            validateSignature("SEXP(*fstappendrows)(Rcpp::String,SEXP,SEXP,SEXP)");
+            p_fstappendrows = (Ptr_fstappendrows)R_GetCCallable("fstcore", "_fstcore_fstappendrows");
+        }
+        RObject rcpp_result_gen;
+        {
+            rcpp_result_gen = p_fstappendrows(Shield<SEXP>(Rcpp::wrap(fileName)), Shield<SEXP>(Rcpp::wrap(table)), Shield<SEXP>(Rcpp::wrap(compression)), Shield<SEXP>(Rcpp::wrap(uniformEncoding)));
+        }
+        if (rcpp_result_gen.inherits("interrupted-error"))
+            throw Rcpp::internal::InterruptedException();
+        if (Rcpp::internal::isLongjumpSentinel(rcpp_result_gen))
+            throw Rcpp::LongjumpException(rcpp_result_gen);
+        if (rcpp_result_gen.inherits("try-error"))
+            throw Rcpp::exception(Rcpp::as<std::string>(rcpp_result_gen).c_str());
+        return Rcpp::as<SEXP >(rcpp_result_gen);
+    }
+
+    inline SEXP fstreplacecolumns(Rcpp::String fileName, SEXP table, SEXP compression, SEXP uniformEncoding) {
+        typedef SEXP(*Ptr_fstreplacecolumns)(SEXP,SEXP,SEXP,SEXP);
+        static Ptr_fstreplacecolumns p_fstreplacecolumns = NULL;
+        if (p_fstreplacecolumns == NULL) {
+            validateSignature("SEXP(*fstreplacecolumns)(Rcpp::String,SEXP,SEXP,SEXP)");
+            p_fstreplacecolumns = (Ptr_fstreplacecolumns)R_GetCCallable("fstcore", "_fstcore_fstreplacecolumns");
+        }
+        RObject rcpp_result_gen;
+        {
+            rcpp_result_gen = p_fstreplacecolumns(Shield<SEXP>(Rcpp::wrap(fileName)), Shield<SEXP>(Rcpp::wrap(table)), Shield<SEXP>(Rcpp::wrap(compression)), Shield<SEXP>(Rcpp::wrap(uniformEncoding)));
+        }
+        if (rcpp_result_gen.inherits("interrupted-error"))
+            throw Rcpp::internal::InterruptedException();
+        if (Rcpp::internal::isLongjumpSentinel(rcpp_result_gen))
+            throw Rcpp::LongjumpException(rcpp_result_gen);
+        if (rcpp_result_gen.inherits("try-error"))
+            throw Rcpp::exception(Rcpp::as<std::string>(rcpp_result_gen).c_str());
+        return Rcpp::as<SEXP >(rcpp_result_gen);
+    }
+
     inline SEXP fsthasher(SEXP rawVec, SEXP seed, SEXP blockHash) {
         typedef SEXP(*Ptr_fsthasher)(SEXP,SEXP,SEXP);
         static Ptr_fsthasher p_fsthasher = NULL;

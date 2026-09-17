@@ -186,6 +186,78 @@ RcppExport SEXP _fstcore_fstappend(SEXP fileNameSEXP, SEXP tableSEXP, SEXP compr
     UNPROTECT(1);
     return rcpp_result_gen;
 }
+// fstappendrows
+SEXP fstappendrows(Rcpp::String fileName, SEXP table, SEXP compression, SEXP uniformEncoding);
+static SEXP _fstcore_fstappendrows_try(SEXP fileNameSEXP, SEXP tableSEXP, SEXP compressionSEXP, SEXP uniformEncodingSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::traits::input_parameter< Rcpp::String >::type fileName(fileNameSEXP);
+    Rcpp::traits::input_parameter< SEXP >::type table(tableSEXP);
+    Rcpp::traits::input_parameter< SEXP >::type compression(compressionSEXP);
+    Rcpp::traits::input_parameter< SEXP >::type uniformEncoding(uniformEncodingSEXP);
+    rcpp_result_gen = Rcpp::wrap(fstappendrows(fileName, table, compression, uniformEncoding));
+    return rcpp_result_gen;
+END_RCPP_RETURN_ERROR
+}
+RcppExport SEXP _fstcore_fstappendrows(SEXP fileNameSEXP, SEXP tableSEXP, SEXP compressionSEXP, SEXP uniformEncodingSEXP) {
+    SEXP rcpp_result_gen;
+    {
+        rcpp_result_gen = PROTECT(_fstcore_fstappendrows_try(fileNameSEXP, tableSEXP, compressionSEXP, uniformEncodingSEXP));
+    }
+    Rboolean rcpp_isInterrupt_gen = Rf_inherits(rcpp_result_gen, "interrupted-error");
+    if (rcpp_isInterrupt_gen) {
+        UNPROTECT(1);
+        Rf_onintr();
+    }
+    bool rcpp_isLongjump_gen = Rcpp::internal::isLongjumpSentinel(rcpp_result_gen);
+    if (rcpp_isLongjump_gen) {
+        Rcpp::internal::resumeJump(rcpp_result_gen);
+    }
+    Rboolean rcpp_isError_gen = Rf_inherits(rcpp_result_gen, "try-error");
+    if (rcpp_isError_gen) {
+        SEXP rcpp_msgSEXP_gen = Rf_asChar(rcpp_result_gen);
+        UNPROTECT(1);
+        Rf_error("%s", CHAR(rcpp_msgSEXP_gen));
+    }
+    UNPROTECT(1);
+    return rcpp_result_gen;
+}
+// fstreplacecolumns
+SEXP fstreplacecolumns(Rcpp::String fileName, SEXP table, SEXP compression, SEXP uniformEncoding);
+static SEXP _fstcore_fstreplacecolumns_try(SEXP fileNameSEXP, SEXP tableSEXP, SEXP compressionSEXP, SEXP uniformEncodingSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::traits::input_parameter< Rcpp::String >::type fileName(fileNameSEXP);
+    Rcpp::traits::input_parameter< SEXP >::type table(tableSEXP);
+    Rcpp::traits::input_parameter< SEXP >::type compression(compressionSEXP);
+    Rcpp::traits::input_parameter< SEXP >::type uniformEncoding(uniformEncodingSEXP);
+    rcpp_result_gen = Rcpp::wrap(fstreplacecolumns(fileName, table, compression, uniformEncoding));
+    return rcpp_result_gen;
+END_RCPP_RETURN_ERROR
+}
+RcppExport SEXP _fstcore_fstreplacecolumns(SEXP fileNameSEXP, SEXP tableSEXP, SEXP compressionSEXP, SEXP uniformEncodingSEXP) {
+    SEXP rcpp_result_gen;
+    {
+        rcpp_result_gen = PROTECT(_fstcore_fstreplacecolumns_try(fileNameSEXP, tableSEXP, compressionSEXP, uniformEncodingSEXP));
+    }
+    Rboolean rcpp_isInterrupt_gen = Rf_inherits(rcpp_result_gen, "interrupted-error");
+    if (rcpp_isInterrupt_gen) {
+        UNPROTECT(1);
+        Rf_onintr();
+    }
+    bool rcpp_isLongjump_gen = Rcpp::internal::isLongjumpSentinel(rcpp_result_gen);
+    if (rcpp_isLongjump_gen) {
+        Rcpp::internal::resumeJump(rcpp_result_gen);
+    }
+    Rboolean rcpp_isError_gen = Rf_inherits(rcpp_result_gen, "try-error");
+    if (rcpp_isError_gen) {
+        SEXP rcpp_msgSEXP_gen = Rf_asChar(rcpp_result_gen);
+        UNPROTECT(1);
+        Rf_error("%s", CHAR(rcpp_msgSEXP_gen));
+    }
+    UNPROTECT(1);
+    return rcpp_result_gen;
+}
 // fsthasher
 SEXP fsthasher(SEXP rawVec, SEXP seed, SEXP blockHash);
 static SEXP _fstcore_fsthasher_try(SEXP rawVecSEXP, SEXP seedSEXP, SEXP blockHashSEXP) {
@@ -471,6 +543,8 @@ static int _fstcore_RcppExport_validate(const char* sig) {
         signatures.insert("SEXP(*fstmetadata)(Rcpp::String)");
         signatures.insert("SEXP(*fstretrieve)(Rcpp::String,SEXP,SEXP,SEXP)");
         signatures.insert("SEXP(*fstappend)(Rcpp::String,SEXP,SEXP,SEXP)");
+        signatures.insert("SEXP(*fstappendrows)(Rcpp::String,SEXP,SEXP,SEXP)");
+        signatures.insert("SEXP(*fstreplacecolumns)(Rcpp::String,SEXP,SEXP,SEXP)");
         signatures.insert("SEXP(*fsthasher)(SEXP,SEXP,SEXP)");
         signatures.insert("SEXP(*fstcomp)(SEXP,SEXP,SEXP,SEXP)");
         signatures.insert("SEXP(*fstdecomp)(SEXP)");
@@ -490,6 +564,8 @@ RcppExport SEXP _fstcore_RcppExport_registerCCallable() {
     R_RegisterCCallable("fstcore", "_fstcore_fstmetadata", (DL_FUNC)_fstcore_fstmetadata_try);
     R_RegisterCCallable("fstcore", "_fstcore_fstretrieve", (DL_FUNC)_fstcore_fstretrieve_try);
     R_RegisterCCallable("fstcore", "_fstcore_fstappend", (DL_FUNC)_fstcore_fstappend_try);
+    R_RegisterCCallable("fstcore", "_fstcore_fstappendrows", (DL_FUNC)_fstcore_fstappendrows_try);
+    R_RegisterCCallable("fstcore", "_fstcore_fstreplacecolumns", (DL_FUNC)_fstcore_fstreplacecolumns_try);
     R_RegisterCCallable("fstcore", "_fstcore_fsthasher", (DL_FUNC)_fstcore_fsthasher_try);
     R_RegisterCCallable("fstcore", "_fstcore_fstcomp", (DL_FUNC)_fstcore_fstcomp_try);
     R_RegisterCCallable("fstcore", "_fstcore_fstdecomp", (DL_FUNC)_fstcore_fstdecomp_try);
@@ -508,6 +584,8 @@ static const R_CallMethodDef CallEntries[] = {
     {"_fstcore_fstmetadata", (DL_FUNC) &_fstcore_fstmetadata, 1},
     {"_fstcore_fstretrieve", (DL_FUNC) &_fstcore_fstretrieve, 4},
     {"_fstcore_fstappend", (DL_FUNC) &_fstcore_fstappend, 4},
+    {"_fstcore_fstappendrows", (DL_FUNC) &_fstcore_fstappendrows, 4},
+    {"_fstcore_fstreplacecolumns", (DL_FUNC) &_fstcore_fstreplacecolumns, 4},
     {"_fstcore_fsthasher", (DL_FUNC) &_fstcore_fsthasher, 3},
     {"_fstcore_fstcomp", (DL_FUNC) &_fstcore_fstcomp, 4},
     {"_fstcore_fstdecomp", (DL_FUNC) &_fstcore_fstdecomp, 1},

@@ -23,6 +23,7 @@
 #include <vector>
 #include <interface/istringwriter.h>
 #include <memory>
+#include <fstream>
 
 #include <interface/icolumnfactory.h>
 #include <interface/ifsttable.h>
@@ -34,9 +35,15 @@ class FstStore
   std::unique_ptr<char[]> metaDataBlockP;
 
   void fstWriteImpl(IFstTable &fstTable, int compress, const FstStore* existing,
-    IStringWriter* allNames) const;
+    IStringWriter* allNames, bool appendRows = false,
+    const std::vector<int>* replacements = nullptr) const;
+
+  void readSegmentedColumn(IFstTable& table, IColumnFactory* factory,
+    std::ifstream& file, int col, int outputCol, uint64_t first, uint64_t length);
 
   public:
+    struct RowSegment { uint64_t start, rows, position; };
+    std::vector<std::vector<RowSegment>> columnSegments;
     std::vector<unsigned long long> columnPositions;
     unsigned long long* p_nrOfRows;
     int* keyColPos;
@@ -65,6 +72,14 @@ class FstStore
 
     // Existing metadata must have been loaded under the caller's exclusive lock.
     void fstAppend(IFstTable &fstTable, int compress, IStringWriter* allNames) const;
+
+    // Caller validates factor dictionaries and annotations and holds the append lock.
+    void fstAppendRows(IFstTable &fstTable, int compress) const;
+
+    // replacements maps file columns to input columns; -1 preserves a column.
+    // Caller validates names, factor dictionaries and annotations under the lock.
+    void fstReplaceColumns(IFstTable &fstTable, int compress, IStringWriter* allNames,
+      const std::vector<int>& replacements) const;
 
     void fstMeta(IColumnFactory* columnFactory, IStringColumn* col_names);
 

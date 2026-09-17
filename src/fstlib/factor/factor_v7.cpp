@@ -82,7 +82,7 @@ void fdsWriteFactorVec_v7(ofstream &myfile, int* intP, IStringWriter* blockRunne
 
   // Store factor vector here
 
-  unsigned int nrOfRows = size;  // vector length
+  unsigned long long nrOfRows = size;  // retain long-vector lengths
 
   // With zero compression only a fixed width compactor is used (int to byte or int to short)
 
@@ -248,7 +248,7 @@ void fdsReadFactorVec_v7(IFstTable &tableReader, istream &myfile, unsigned long 
   if (*nrOfLevels == 0)
   {
     // All level values must be NA, so we need only the number of levels
-    for (unsigned int pos = 0; pos < length; pos++)
+    for (unsigned long long pos = 0; pos < length; pos++)
     {
       intP[pos] = FST_NA_INT;
     }

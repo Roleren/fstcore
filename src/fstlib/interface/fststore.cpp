@@ -29,6 +29,7 @@
 #include <interface/icolumnfactory.h>
 #include <interface/fstdefines.h>
 #include <interface/fststore.h>
+#include <interface/row_segments.h>
 
 #include <character/character_v6.h>
 #include <factor/factor_v7.h>
@@ -43,6 +44,8 @@
 #include "byteblock/byteblock_v13.h"
 
 using namespace std;
+
+#include <interface/row_segment_reader.h>
 
 
 // Table header [node A] [size: 48]
@@ -170,7 +173,7 @@ inline unsigned int ReadHeader(ifstream &myfile, int &keyLength, int &nrOfColsFi
   }
 
   // Compare file version with current
-  if (*p_tableVersionMax > FST_APPEND_VERSION)
+  if (*p_tableVersionMax > FST_ROWS_VERSION)
   {
     myfile.close();
     throw(runtime_error(FSTERROR_UPDATE_FST));
@@ -242,12 +245,81 @@ void FstStore::fstAppend(IFstTable &fstTable, const int compress, IStringWriter*
   fstWriteImpl(fstTable, compress, this, allNames);
 }
 
-void FstStore::fstWriteImpl(IFstTable &fstTable, const int compress,
-  const FstStore* existing, IStringWriter* allNames) const
+void FstStore::fstAppendRows(IFstTable &fstTable, const int compress) const
 {
-  const int oldCols = existing ? existing->nrOfCols : 0;
-  const int nrOfCols = oldCols + fstTable.NrOfColumns();
-  const int keyLength = existing ? existing->keyLength : fstTable.NrOfKeys();
+  if (!p_nrOfRows || columnSegments.size() != static_cast<size_t>(nrOfCols))
+    throw runtime_error("Load fst metadata before appending rows.");
+  if (compress < 0 || compress > 100 || nrOfCols == 0 || fstTable.NrOfColumns() != static_cast<unsigned>(nrOfCols))
+    throw runtime_error("Row append requires matching columns and compression between 0 and 100.");
+  if (fstTable.NrOfRows() > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) - *p_nrOfRows)
+    throw runtime_error("Appended row count exceeds the supported range.");
+  for (int col = 0; col < nrOfCols; ++col) {
+    FstColumnAttribute attribute; short scale = 0; std::string annotation; bool hasAnnotation;
+    const auto type = fstTable.ColumnType(col, attribute, scale, annotation, hasAnnotation);
+    if (static_cast<unsigned>(type) != colBaseTypes[col] || static_cast<unsigned>(attribute) != colAttributeTypes[col] ||
+        static_cast<unsigned short>(scale) != colScales[col] || type == FstColumnType::BYTE_BLOCK)
+      throw runtime_error("Row append requires identical column types, attributes and scales.");
+  }
+  if (!fstTable.NrOfRows()) return;
+  fstWriteImpl(fstTable, compress, this, nullptr, true);
+}
+
+void FstStore::fstReplaceColumns(IFstTable &table, int compress, IStringWriter* allNames,
+  const std::vector<int>& replacements) const
+{
+  if (!p_nrOfRows || replacements.size() != static_cast<size_t>(nrOfCols) ||
+      columnSegments.size() != replacements.size() || !allNames || allNames->vecLength != nrOfCols)
+    throw runtime_error("Load matching fst metadata before replacing columns.");
+  if (compress < 0 || compress > 100 || table.NrOfColumns() == 0 || table.NrOfRows() != *p_nrOfRows)
+    throw runtime_error("Replacement columns must have the same number of rows as the fst file.");
+  std::vector<bool> seen(table.NrOfColumns(), false);
+  for (int col = 0; col < nrOfCols; ++col) {
+    const int source = replacements[col];
+    if (source == -1) continue;
+    if (source < 0 || static_cast<unsigned>(source) >= table.NrOfColumns() || seen[source])
+      throw runtime_error("Invalid replacement column mapping.");
+    seen[source] = true;
+    FstColumnAttribute attribute; short scale = 0; std::string annotation; bool annotated;
+    const auto type = table.ColumnType(source, attribute, scale, annotation, annotated);
+    if (static_cast<unsigned>(type) != colBaseTypes[col] || static_cast<unsigned>(attribute) != colAttributeTypes[col] ||
+        static_cast<unsigned short>(scale) != colScales[col] || type == FstColumnType::BYTE_BLOCK)
+      throw runtime_error("Replacement columns must have identical stored types, attributes and scales.");
+  }
+  if (std::find(seen.begin(), seen.end(), false) != seen.end())
+    throw runtime_error("Every replacement column must match an existing column.");
+  if (!table.NrOfRows()) return;
+  fstWriteImpl(table, compress, this, allNames, false, &replacements);
+}
+
+void FstStore::fstWriteImpl(IFstTable &fstTable, const int compress,
+  const FstStore* existing, IStringWriter* allNames, const bool appendRows,
+  const std::vector<int>* replacements) const
+{
+  const int oldCols = existing && !appendRows ? existing->nrOfCols : 0;
+  const int nrOfCols = replacements ? oldCols : oldCols + fstTable.NrOfColumns();
+  bool dropKeys = appendRows;
+  if (replacements) {
+    for (int key = 0; key < existing->keyLength; ++key) {
+      if (existing->keyColPos[key] < 0 || existing->keyColPos[key] >= nrOfCols)
+        throw runtime_error("Invalid stored key column index.");
+      if ((*replacements)[existing->keyColPos[key]] >= 0) dropKeys = true;
+    }
+  }
+  const int keyLength = dropKeys ? 0 : (existing ? existing->keyLength : fstTable.NrOfKeys());
+  const bool segmented = appendRows || (existing && existing->tableVersionMax == FST_ROWS_VERSION);
+  std::vector<std::vector<RowSegment>> segments;
+  if (segmented) {
+    segments = existing->columnSegments;
+    if (appendRows) {
+      for (auto& col : segments) col.push_back({*existing->p_nrOfRows, fstTable.NrOfRows(), 0});
+    } else if (replacements) {
+      for (int col = 0; col < nrOfCols; ++col)
+        if ((*replacements)[col] >= 0) segments[col] = {{0, fstTable.NrOfRows(), 0}};
+    } else {
+      for (unsigned col = 0; col < fstTable.NrOfColumns(); ++col)
+        segments.push_back({{0, fstTable.NrOfRows(), 0}});
+    }
+  }
 
   const unsigned long long tableHeaderSize = TABLE_META_SIZE;
   unsigned long long keyIndexHeaderSize = 0;
@@ -330,7 +402,7 @@ void FstStore::fstWriteImpl(IFstTable &fstTable, const int compress,
 
   *p_fst_magic_number               = FST_MAGIC_NUMBER;
   *p_freeBytes1                     = 0;
-  *p_tableVersionMax                = existing ? FST_APPEND_VERSION : FST_VERSION;
+  *p_tableVersionMax                = segmented ? FST_ROWS_VERSION : (existing ? FST_APPEND_VERSION : FST_VERSION);
 
   if (isLittleEndian) *p_tableFlags = 1;
 
@@ -359,7 +431,8 @@ void FstStore::fstWriteImpl(IFstTable &fstTable, const int compress,
   *p_secChunksetIndex      = 0;
 
   const uint64_t nrOfRows = fstTable.NrOfRows();
-  *p_nrOfRows                 = nrOfRows;
+  const uint64_t totalRows = nrOfRows + (appendRows ? *existing->p_nrOfRows : 0);
+  *p_nrOfRows                 = totalRows;
   *p_nrOfChunksetCols         = nrOfCols;
   *p_freeBytes4               = 0;
 
@@ -400,8 +473,8 @@ void FstStore::fstWriteImpl(IFstTable &fstTable, const int compress,
 
   // Serialize column names
   {
-    std::unique_ptr<IStringWriter> blockRunnerP(existing ? nullptr : fstTable.GetColNameWriter());
-    IStringWriter* blockRunner = existing ? allNames : blockRunnerP.get();
+    std::unique_ptr<IStringWriter> blockRunnerP(allNames ? nullptr : fstTable.GetColNameWriter());
+    IStringWriter* blockRunner = allNames ? allNames : blockRunnerP.get();
     fdsWriteCharVec_v6(myfile, blockRunner, 0, blockRunner->Encoding());   // column names
   }
 
@@ -441,7 +514,7 @@ void FstStore::fstWriteImpl(IFstTable &fstTable, const int compress,
   *p_freeBytes6        = 0;
   *p_nrOfChunkSlots    = 4;
    p_freeBytes7[0]     = p_freeBytes7[1] = p_freeBytes7[2] = 0;
-  *p_chunkRows         = nrOfRows;
+  *p_chunkRows         = totalRows;
 
   // Set data chunk header parameters
 
@@ -456,10 +529,16 @@ void FstStore::fstWriteImpl(IFstTable &fstTable, const int compress,
   // update chunk position data
   *p_chunkPos = (unsigned long long)(myfile.tellp()) - 8 * nrOfCols - DATA_INDEX_SIZE;
 
+  const auto manifestPos = myfile.tellp();
+  if (segmented) {
+    const auto manifest = fst_rows::encode(segments);
+    myfile.write(manifest.data(), manifest.size());
+  }
+
   // column data
   for (int colNr = 0; colNr < nrOfCols; ++colNr)
   {
-    if (colNr < oldCols)
+    if (colNr < oldCols && (!replacements || (*replacements)[colNr] < 0))
     {
       positionData[colNr] = existing->columnPositions[colNr];
       colBaseTypes[colNr] = existing->colBaseTypes[colNr];
@@ -468,8 +547,12 @@ void FstStore::fstWriteImpl(IFstTable &fstTable, const int compress,
       colTypes[colNr] = existing->colTypes[colNr];
       continue;
     }
-    const int sourceCol = colNr - oldCols;
+    const int sourceCol = replacements ? (*replacements)[colNr] : colNr - oldCols;
     positionData[colNr] = myfile.tellp();  // current location
+    if (segmented) {
+      segments[colNr].back().position = positionData[colNr];
+      positionData[colNr] = segments[colNr][0].position;
+    }
   	FstColumnAttribute colAttribute;
   	std::string annotation = "";
     short int scale = 0;
@@ -569,6 +652,12 @@ void FstStore::fstWriteImpl(IFstTable &fstTable, const int compress,
 
   myfile.seekp(*p_chunkPos - CHUNK_INDEX_SIZE);
   myfile.write(chunkIndex, chunkIndexSize);  // vertical chunkset index and positiondata
+
+  if (segmented) {
+    const auto manifest = fst_rows::encode(segments);
+    myfile.seekp(manifestPos);
+    myfile.write(manifest.data(), manifest.size());
+  }
 
   // Check file status only here for performance.
   // Any error that was generated earlier will result in a fail here.
@@ -704,6 +793,9 @@ void FstStore::fstMeta(IColumnFactory* columnFactory, IStringColumn* col_names)
     throw runtime_error(FSTERROR_DAMAGED_CHUNKINDEX);
   columnPositions.resize(nrOfCols);
   if (nrOfCols) memcpy(columnPositions.data(), index.data() + CHUNK_INDEX_SIZE + DATA_INDEX_SIZE, 8ULL * nrOfCols);
+  if (tableVersionMax == FST_ROWS_VERSION && fst_rows::get64(index.data() + 64) != *p_nrOfRows)
+    throw runtime_error("Row-segment row counts disagree.");
+  fst_rows::read(myfile, tableVersionMax, nrOfCols, *p_nrOfRows, columnPositions.data(), columnSegments);
 
   // cleanup
   myfile.close();
@@ -861,6 +953,10 @@ void FstStore::fstRead(IFstTable &tableReader, IStringArray* columnSelection, co
 
   // Read block positions
   unsigned long long* blockPos = positionData;
+  if (tableVersionMax == FST_ROWS_VERSION &&
+      fst_rows::get64(&metaDataBlock[keyIndexHeaderSize + 64]) != *p_chunkRows)
+    throw runtime_error("Row-segment row counts disagree.");
+  fst_rows::read(myfile, tableVersionMax, nrOfCols, *p_chunkRows, blockPos, columnSegments);
 
 
   // Determine column selection
@@ -960,6 +1056,11 @@ void FstStore::fstRead(IFstTable &tableReader, IStringArray* columnSelection, co
 
     const uint64_t pos = blockPos[colNr];
     const short int scale = colScales[colNr];
+
+    if (tableVersionMax == FST_ROWS_VERSION) {
+      readSegmentedColumn(tableReader, columnFactory, myfile, colNr, colSel, firstRow, length);
+      continue;
+    }
 
     switch (colTypes[colNr])
     {

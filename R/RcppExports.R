@@ -21,6 +21,14 @@ fstappend <- function(fileName, table, compression, uniformEncoding) {
     .Call(`_fstcore_fstappend`, fileName, table, compression, uniformEncoding)
 }
 
+fstappendrows <- function(fileName, table, compression, uniformEncoding) {
+    .Call(`_fstcore_fstappendrows`, fileName, table, compression, uniformEncoding)
+}
+
+fstreplacecolumns <- function(fileName, table, compression, uniformEncoding) {
+    .Call(`_fstcore_fstreplacecolumns`, fileName, table, compression, uniformEncoding)
+}
+
 getnrofthreads <- function() {
     .Call(`_fstcore_getnrofthreads`)
 }
