@@ -51,10 +51,14 @@ SEXP fstreplacecolumns(Rcpp::String fileName, SEXP table, SEXP compression, SEXP
 
 // [[Rcpp::export(rng = false)]]
 SEXP fstwriterle(Rcpp::String fileName, SEXP values, SEXP lengths, SEXP colNames, double start, double end,
-  SEXP compression, SEXP uniformEncoding);
+  SEXP compression, SEXP uniformEncoding, bool runsAreEnds = false);
 
 // [[Rcpp::export(rng = false)]]
 SEXP fstappendrle(Rcpp::String fileName, SEXP values, SEXP lengths, SEXP colNames, double start, double end,
-  SEXP compression, SEXP uniformEncoding);
+  SEXP compression, SEXP uniformEncoding, bool runsAreEnds = false);
+
+// [[Rcpp::export(rng = false)]]
+SEXP fstreplacerle(Rcpp::String fileName, SEXP values, SEXP lengths, SEXP colNames, double start, double end,
+  SEXP compression, SEXP uniformEncoding, bool runsAreEnds = false);
 
 #endif  // FASTSTORE_H

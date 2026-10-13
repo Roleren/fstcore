@@ -29,12 +29,16 @@ fstreplacecolumns <- function(fileName, table, compression, uniformEncoding) {
     .Call(`_fstcore_fstreplacecolumns`, fileName, table, compression, uniformEncoding)
 }
 
-fstwriterle <- function(fileName, values, lengths, colNames, start, end, compression, uniformEncoding) {
-    .Call(`_fstcore_fstwriterle`, fileName, values, lengths, colNames, start, end, compression, uniformEncoding)
+fstwriterle <- function(fileName, values, lengths, colNames, start, end, compression, uniformEncoding, runsAreEnds = FALSE) {
+    .Call(`_fstcore_fstwriterle`, fileName, values, lengths, colNames, start, end, compression, uniformEncoding, runsAreEnds)
 }
 
-fstappendrle <- function(fileName, values, lengths, colNames, start, end, compression, uniformEncoding) {
-    .Call(`_fstcore_fstappendrle`, fileName, values, lengths, colNames, start, end, compression, uniformEncoding)
+fstappendrle <- function(fileName, values, lengths, colNames, start, end, compression, uniformEncoding, runsAreEnds = FALSE) {
+    .Call(`_fstcore_fstappendrle`, fileName, values, lengths, colNames, start, end, compression, uniformEncoding, runsAreEnds)
+}
+
+fstreplacerle <- function(fileName, values, lengths, colNames, start, end, compression, uniformEncoding, runsAreEnds = FALSE) {
+    .Call(`_fstcore_fstreplacerle`, fileName, values, lengths, colNames, start, end, compression, uniformEncoding, runsAreEnds)
 }
 
 getnrofthreads <- function() {

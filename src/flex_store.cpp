@@ -568,7 +568,7 @@ static SEXP rleArgsError(SEXP compression, SEXP uniformEncoding, double start, d
 }
 
 SEXP fstwriterle(String fileName, SEXP values, SEXP lengths, SEXP colNames, double start, double end,
-  SEXP compression, SEXP uniformEncoding)
+  SEXP compression, SEXP uniformEncoding, bool runsAreEnds)
 {
   SEXP err = rleArgsError(compression, uniformEncoding, start, end);
   if (err != R_NilValue) return err;
@@ -580,7 +580,7 @@ SEXP fstwriterle(String fileName, SEXP values, SEXP lengths, SEXP colNames, doub
         return fst_error("Column names must be unique and non-empty.");
     }
     RleWindowTable table(values, lengths, colNames, static_cast<uint64_t>(start), static_cast<uint64_t>(end),
-      LOGICAL(uniformEncoding)[0]);
+      LOGICAL(uniformEncoding)[0], runsAreEnds);
     FstStore store(fileName.get_cstring());
     store.fstWrite(table, INTEGER(compression)[0]);
   } catch (const std::exception& e) {
@@ -590,7 +590,7 @@ SEXP fstwriterle(String fileName, SEXP values, SEXP lengths, SEXP colNames, doub
 }
 
 SEXP fstappendrle(String fileName, SEXP values, SEXP lengths, SEXP colNames, double start, double end,
-  SEXP compression, SEXP uniformEncoding)
+  SEXP compression, SEXP uniformEncoding, bool runsAreEnds)
 {
   SEXP err = rleArgsError(compression, uniformEncoding, start, end);
   if (err != R_NilValue) return err;
@@ -621,10 +621,59 @@ SEXP fstappendrle(String fileName, SEXP values, SEXP lengths, SEXP colNames, dou
       allNames[store.nrOfCols + i] = Rf_mkCharCE(Rf_translateCharUTF8(name), CE_UTF8);
     }
     RleWindowTable table(values, lengths, colNames, static_cast<uint64_t>(start), static_cast<uint64_t>(end),
-      LOGICAL(uniformEncoding)[0]);
+      LOGICAL(uniformEncoding)[0], runsAreEnds);
     SEXP combinedNames = allNames;
     BlockWriterChar nameWriter(combinedNames, allNames.size(), MAX_CHAR_STACK_SIZE, true);
     store.fstAppend(table, INTEGER(compression)[0], &nameWriter);
+  } catch (const std::exception& e) {
+    return fst_error(e.what());
+  }
+  return R_NilValue;
+}
+
+// Replace existing INT_32 columns (matched by name) with run-length windows; mirrors fstreplacecolumns().
+SEXP fstreplacerle(String fileName, SEXP values, SEXP lengths, SEXP colNames, double start, double end,
+  SEXP compression, SEXP uniformEncoding, bool runsAreEnds)
+{
+  SEXP err = rleArgsError(compression, uniformEncoding, start, end);
+  if (err != R_NilValue) return err;
+  try {
+    FstAppendLock lock(fileName.get_cstring());
+    List namesContainer(1);
+    StringVectorContainer oldNames(namesContainer);
+    ColumnFactory factory;
+    FstStore store(fileName.get_cstring());
+    store.fstMeta(&factory, &oldNames);
+    if (static_cast<uint64_t>(end - start + 1) != *store.p_nrOfRows)
+      return fst_error("Replacement columns must have the same number of rows as the fst file.");
+    if (TYPEOF(colNames) != STRSXP || XLENGTH(colNames) == 0)
+      return fst_error("Please supply at least one replacement column name.");
+    std::map<std::string, int> existing;
+    for (int col = 0; col < store.nrOfCols; ++col) {
+      SEXP name = STRING_ELT(oldNames.StrVector(), col);
+      if (name == NA_STRING || LENGTH(name) == 0 || !existing.emplace(Rf_translateCharUTF8(name), col).second)
+        return fst_error("Existing columns must have unique, non-empty names for replacement.");
+    }
+    std::vector<int> replacements(store.nrOfCols, -1);
+    for (R_xlen_t source = 0; source < XLENGTH(colNames); ++source) {
+      SEXP name = STRING_ELT(colNames, source);
+      if (name == NA_STRING || LENGTH(name) == 0) return fst_error("Replacement columns must have non-empty names.");
+      const std::string utf8Name = Rf_translateCharUTF8(name);
+      const auto found = existing.find(utf8Name);
+      if (found == existing.end()) throw std::runtime_error(std::string("Replacement column does not exist: ") + utf8Name);
+      const int target = found->second;
+      if (replacements[target] >= 0) return fst_error("Replacement column names must be unique.");
+      if (store.colBaseTypes[target] != static_cast<unsigned short>(FstColumnType::INT_32) ||
+          store.colAttributeTypes[target] != static_cast<unsigned short>(FstColumnAttribute::INT_32_BASE) ||
+          store.colScales[target] != 0)
+        throw std::runtime_error("Column '" + utf8Name + "': only plain integer columns can be replaced from run-length data.");
+      replacements[target] = static_cast<int>(source);
+    }
+    RleWindowTable table(values, lengths, colNames, static_cast<uint64_t>(start), static_cast<uint64_t>(end),
+      LOGICAL(uniformEncoding)[0], runsAreEnds);
+    SEXP allNames = oldNames.StrVector();
+    BlockWriterChar nameWriter(allNames, store.nrOfCols, MAX_CHAR_STACK_SIZE, false);
+    store.fstReplaceColumns(table, INTEGER(compression)[0], &nameWriter, replacements);
   } catch (const std::exception& e) {
     return fst_error(e.what());
   }
