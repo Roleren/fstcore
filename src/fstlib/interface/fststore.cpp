@@ -29,6 +29,7 @@
 #include <interface/icolumnfactory.h>
 #include <interface/fstdefines.h>
 #include <interface/fststore.h>
+#include <interface/openmphelper.h>
 #include <interface/row_segments.h>
 
 #include <character/character_v6.h>
@@ -1068,6 +1069,90 @@ void FstStore::fstRead(IFstTable &tableReader, IStringArray* columnSelection, co
   }
   tableReader.InitTable(nrOfSelect, length);
 
+  // Parallel across columns (fork): fixed-width columns of a plain (non row-segmented) file are
+  // allocated serially (R allocation must stay on this thread), then filled concurrently, each
+  // thread with its own stream. Each column's own reader then runs its block loop single-threaded
+  // (nested OpenMP regions are inactive). Wide small-window reads were otherwise single-threaded:
+  // one 16 KB block per column, columns read one after another. Other column types and
+  // range/segmented reads keep the per-column path below.
+  std::vector<char> columnDone(nrOfSelect, 0);
+  const int columnThreads = GetFstThreads();
+  if (!ranges && tableVersionMax != FST_ROWS_VERSION && nrOfSelect > 1 && columnThreads > 1 && length > 0)
+  {
+    struct ColumnJob { int colNr; int type; void* data; IIntegerColumn* intCol; IDoubleColumn* dblCol;
+                       std::string annotation; bool hasAnnotation; };
+    std::vector<ColumnJob> jobs;
+    std::vector<std::unique_ptr<IIntegerColumn>> intCols;
+    std::vector<std::unique_ptr<IDoubleColumn>> dblCols;
+    std::vector<std::unique_ptr<ILogicalColumn>> lglCols;
+    std::vector<std::unique_ptr<IInt64Column>> i64Cols;
+    std::vector<std::unique_ptr<IByteColumn>> byteCols;
+    for (int colSel = 0; colSel < nrOfSelect; ++colSel)
+    {
+      const int colNr = colIndex[colSel];
+      if (colNr < 0 || colNr >= nrOfCols) { myfile.close(); throw(runtime_error("Column selection is out of range.")); }
+      const auto attr = static_cast<FstColumnAttribute>(colAttributeTypes[colNr]);
+      ColumnJob job{colNr, colTypes[colNr], nullptr, nullptr, nullptr, "", false};
+      switch (colTypes[colNr]) {
+        case 8: intCols.emplace_back(columnFactory->CreateIntegerColumn(length, attr, colScales[colNr]));
+                tableReader.SetIntegerColumn(intCols.back().get(), colSel);
+                job.data = intCols.back()->Data(); job.intCol = intCols.back().get(); break;
+        case 9: dblCols.emplace_back(columnFactory->CreateDoubleColumn(length, attr, colScales[colNr]));
+                tableReader.SetDoubleColumn(dblCols.back().get(), colSel);
+                job.data = dblCols.back()->Data(); job.dblCol = dblCols.back().get(); break;
+        case 10: lglCols.emplace_back(columnFactory->CreateLogicalColumn(length, attr));
+                 tableReader.SetLogicalColumn(lglCols.back().get(), colSel); job.data = lglCols.back()->Data(); break;
+        case 11: i64Cols.emplace_back(columnFactory->CreateInt64Column(length, attr, colScales[colNr]));
+                 tableReader.SetInt64Column(i64Cols.back().get(), colSel); job.data = i64Cols.back()->Data(); break;
+        case 12: byteCols.emplace_back(columnFactory->CreateByteColumn(length, attr));
+                 tableReader.SetByteColumn(byteCols.back().get(), colSel); job.data = byteCols.back()->Data(); break;
+        default: continue;  // character, factor, byte block: serial path below
+      }
+      jobs.push_back(job);
+      columnDone[colSel] = 1;
+    }
+
+    int failed = 0;
+    std::string failure;
+    const int nThreads = std::max(1, std::min(columnThreads, static_cast<int>(jobs.size())));
+#pragma omp parallel num_threads(nThreads)
+    {
+      ifstream threadFile(fstFile.c_str(), ios::binary);
+      if (!threadFile.is_open()) {
+#pragma omp critical(fstParallelReadError)
+        { failed = 1; failure = "Error opening fst file for a parallel column read."; }
+      }
+#pragma omp for schedule(dynamic, 1)
+      for (long long j = 0; j < static_cast<long long>(jobs.size()); ++j)
+      {
+        if (failed) continue;
+        ColumnJob& job = jobs[j];
+        const uint64_t pos = blockPos[job.colNr];
+        try {
+          switch (job.type) {
+            case 8: fdsReadIntVec_v8(threadFile, static_cast<int*>(job.data), pos, firstRow, length, nrOfRows,
+                                     job.annotation, job.hasAnnotation); break;
+            case 9: fdsReadRealVec_v9(threadFile, static_cast<double*>(job.data), pos, firstRow, length, nrOfRows,
+                                      job.annotation, job.hasAnnotation); break;
+            case 10: fdsReadLogicalVec_v10(threadFile, static_cast<int*>(job.data), pos, firstRow, length, nrOfRows); break;
+            case 11: fdsReadInt64Vec_v11(threadFile, static_cast<long long*>(job.data), pos, firstRow,
+                                         static_cast<uint64_t>(length), nrOfRows); break;
+            case 12: fdsReadByteVec_v12(threadFile, static_cast<char*>(job.data), pos, firstRow, length, nrOfRows); break;
+          }
+        } catch (const std::exception& e) {
+#pragma omp critical(fstParallelReadError)
+          { failed = 1; failure = e.what(); }
+        }
+      }
+    }
+    if (failed) { myfile.close(); throw runtime_error(failure); }
+    for (auto& job : jobs) {   // annotations touch R objects: serial
+      if (!job.hasAnnotation) continue;
+      if (job.intCol) job.intCol->Annotate(job.annotation);
+      if (job.dblCol) job.dblCol->Annotate(job.annotation);
+    }
+  }
+
   for (int colSel = 0; colSel < nrOfSelect; ++colSel)
   {
     const int colNr = colIndex[colSel];
@@ -1077,6 +1162,7 @@ void FstStore::fstRead(IFstTable &tableReader, IStringArray* columnSelection, co
       myfile.close();
       throw(runtime_error("Column selection is out of range."));
     }
+    if (columnDone[colSel]) continue;
 
     const uint64_t pos = blockPos[colNr];
     const short int scale = colScales[colNr];

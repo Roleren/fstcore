@@ -30,6 +30,7 @@
 
 #include "blockstreamer_v2.h"
 #include <memory>
+#include <mutex>
 
 #define BATCH_SIZE_WRITE 25
 
@@ -723,6 +724,7 @@ void fdsReadColumn_v2(istream& myfile, char* outVec, unsigned long long blockPos
 
   long long nrOfBatches = (maxBlock + batchSize - 1) / batchSize; // number of batches (last one may be smaller)
   long long blockCount = 0;
+  std::mutex streamMutex;
 
   //////////////////////////////////////////////////////////
   // Parallel logic starts here
@@ -741,8 +743,10 @@ void fdsReadColumn_v2(istream& myfile, char* outVec, unsigned long long blockPos
       char* threadBuf = &threadBuffer[threadNr * MAX_COMPRESSBOUND * batchSize]; // MAX_COMPRESSBOUND is adjusted to 16-byte allignment
       int curBatchSize = batchSize;
 
-#pragma omp critical
       {
+        // Per-call lock (was an unnamed, process-global omp critical): it guards this call's stream
+        // and blockCount only, so concurrent reads of other columns need not wait for each other.
+        std::lock_guard<std::mutex> guard(streamMutex);
         blockStart = 1 + blockCount * batchSize;
         bStart = reinterpret_cast<unsigned long long*>(&blockIndex[8 * blockStart]);
 
