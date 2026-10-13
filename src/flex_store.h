@@ -49,4 +49,12 @@ SEXP fstappendrows(Rcpp::String fileName, SEXP table, SEXP compression, SEXP uni
 // [[Rcpp::export(rng = false)]]
 SEXP fstreplacecolumns(Rcpp::String fileName, SEXP table, SEXP compression, SEXP uniformEncoding);
 
+// [[Rcpp::export(rng = false)]]
+SEXP fstwriterle(Rcpp::String fileName, SEXP values, SEXP lengths, SEXP colNames, double start, double end,
+  SEXP compression, SEXP uniformEncoding);
+
+// [[Rcpp::export(rng = false)]]
+SEXP fstappendrle(Rcpp::String fileName, SEXP values, SEXP lengths, SEXP colNames, double start, double end,
+  SEXP compression, SEXP uniformEncoding);
+
 #endif  // FASTSTORE_H

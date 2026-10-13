@@ -39,6 +39,7 @@
 #include <fst_table.h>
 #include <fst_column.h>
 #include <fst_column_factory.h>
+#include <rle_table.h>
 #include <fst_blockrunner_char.h>
 #include <fst_string_vector_container.h>
 
@@ -543,6 +544,87 @@ SEXP fstappendrows(String fileName, SEXP table, SEXP compression, SEXP uniformEn
       }
     }
     store.fstAppendRows(newTable, INTEGER(compression)[0]);
+  } catch (const std::exception& e) {
+    return fst_error(e.what());
+  }
+  return R_NilValue;
+}
+
+
+// ---- Run-length encoded integer columns (fork) ----
+// Columns are windows [start, end] of run-length vectors; decoded one column at a time into a
+// reused buffer by RleWindowTable, so the full table is never materialised in memory.
+
+static SEXP rleArgsError(SEXP compression, SEXP uniformEncoding, double start, double end)
+{
+  if (TYPEOF(compression) != INTSXP || XLENGTH(compression) != 1 ||
+      INTEGER(compression)[0] == NA_INTEGER || INTEGER(compression)[0] < 0 || INTEGER(compression)[0] > 100)
+    return fst_error("Parameter compress must be a single integer between 0 and 100.");
+  if (TYPEOF(uniformEncoding) != LGLSXP || XLENGTH(uniformEncoding) != 1 || LOGICAL(uniformEncoding)[0] == NA_LOGICAL)
+    return fst_error("Parameter uniform_encoding must be TRUE or FALSE.");
+  if (!(start >= 1) || !(end >= start) || end > 9.007199254740992e15 || std::floor(start) != start || std::floor(end) != end)
+    return fst_error("Window must be whole numbers with 1 <= start <= end.");
+  return R_NilValue;
+}
+
+SEXP fstwriterle(String fileName, SEXP values, SEXP lengths, SEXP colNames, double start, double end,
+  SEXP compression, SEXP uniformEncoding)
+{
+  SEXP err = rleArgsError(compression, uniformEncoding, start, end);
+  if (err != R_NilValue) return err;
+  try {
+    std::set<std::string> names;
+    for (R_xlen_t i = 0; i < XLENGTH(colNames); ++i) {
+      SEXP name = STRING_ELT(colNames, i);
+      if (name == NA_STRING || LENGTH(name) == 0 || !names.insert(Rf_translateCharUTF8(name)).second)
+        return fst_error("Column names must be unique and non-empty.");
+    }
+    RleWindowTable table(values, lengths, colNames, static_cast<uint64_t>(start), static_cast<uint64_t>(end),
+      LOGICAL(uniformEncoding)[0]);
+    FstStore store(fileName.get_cstring());
+    store.fstWrite(table, INTEGER(compression)[0]);
+  } catch (const std::exception& e) {
+    return fst_error(e.what());
+  }
+  return R_NilValue;
+}
+
+SEXP fstappendrle(String fileName, SEXP values, SEXP lengths, SEXP colNames, double start, double end,
+  SEXP compression, SEXP uniformEncoding)
+{
+  SEXP err = rleArgsError(compression, uniformEncoding, start, end);
+  if (err != R_NilValue) return err;
+  try {
+    FstAppendLock lock(fileName.get_cstring());
+    List namesContainer(1);
+    StringVectorContainer oldNames(namesContainer);
+    ColumnFactory factory;
+    FstStore store(fileName.get_cstring());
+    store.fstMeta(&factory, &oldNames);
+    if (TYPEOF(colNames) != STRSXP || XLENGTH(colNames) == 0 ||
+        XLENGTH(colNames) > std::numeric_limits<int>::max() - store.nrOfCols)
+      return fst_error("Please supply at least one new column name (and not too many columns).");
+    if (static_cast<uint64_t>(end - start + 1) != *store.p_nrOfRows)
+      return fst_error("New columns must have the same number of rows as the fst file.");
+    CharacterVector allNames(store.nrOfCols + XLENGTH(colNames));
+    std::set<std::string> names;
+    for (int i = 0; i < store.nrOfCols; ++i) {
+      SEXP name = STRING_ELT(oldNames.StrVector(), i);
+      if (name == NA_STRING || !names.insert(Rf_translateCharUTF8(name)).second || LENGTH(name) == 0)
+        return fst_error("Existing columns must have unique, non-empty names.");
+      allNames[i] = Rf_mkCharCE(Rf_translateCharUTF8(name), CE_UTF8);
+    }
+    for (R_xlen_t i = 0; i < XLENGTH(colNames); ++i) {
+      SEXP name = STRING_ELT(colNames, i);
+      if (name == NA_STRING || LENGTH(name) == 0 || !names.insert(Rf_translateCharUTF8(name)).second)
+        return fst_error("New column names must be unique, non-empty, and absent from the fst file.");
+      allNames[store.nrOfCols + i] = Rf_mkCharCE(Rf_translateCharUTF8(name), CE_UTF8);
+    }
+    RleWindowTable table(values, lengths, colNames, static_cast<uint64_t>(start), static_cast<uint64_t>(end),
+      LOGICAL(uniformEncoding)[0]);
+    SEXP combinedNames = allNames;
+    BlockWriterChar nameWriter(combinedNames, allNames.size(), MAX_CHAR_STACK_SIZE, true);
+    store.fstAppend(table, INTEGER(compression)[0], &nameWriter);
   } catch (const std::exception& e) {
     return fst_error(e.what());
   }

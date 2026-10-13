@@ -164,6 +164,46 @@ namespace fstcore {
         return Rcpp::as<SEXP >(rcpp_result_gen);
     }
 
+    inline SEXP fstwriterle(Rcpp::String fileName, SEXP values, SEXP lengths, SEXP colNames, double start, double end, SEXP compression, SEXP uniformEncoding) {
+        typedef SEXP(*Ptr_fstwriterle)(SEXP,SEXP,SEXP,SEXP,SEXP,SEXP,SEXP,SEXP);
+        static Ptr_fstwriterle p_fstwriterle = NULL;
+        if (p_fstwriterle == NULL) {
+            validateSignature("SEXP(*fstwriterle)(Rcpp::String,SEXP,SEXP,SEXP,double,double,SEXP,SEXP)");
+            p_fstwriterle = (Ptr_fstwriterle)R_GetCCallable("fstcore", "_fstcore_fstwriterle");
+        }
+        RObject rcpp_result_gen;
+        {
+            rcpp_result_gen = p_fstwriterle(Shield<SEXP>(Rcpp::wrap(fileName)), Shield<SEXP>(Rcpp::wrap(values)), Shield<SEXP>(Rcpp::wrap(lengths)), Shield<SEXP>(Rcpp::wrap(colNames)), Shield<SEXP>(Rcpp::wrap(start)), Shield<SEXP>(Rcpp::wrap(end)), Shield<SEXP>(Rcpp::wrap(compression)), Shield<SEXP>(Rcpp::wrap(uniformEncoding)));
+        }
+        if (rcpp_result_gen.inherits("interrupted-error"))
+            throw Rcpp::internal::InterruptedException();
+        if (Rcpp::internal::isLongjumpSentinel(rcpp_result_gen))
+            throw Rcpp::LongjumpException(rcpp_result_gen);
+        if (rcpp_result_gen.inherits("try-error"))
+            throw Rcpp::exception(Rcpp::as<std::string>(rcpp_result_gen).c_str());
+        return Rcpp::as<SEXP >(rcpp_result_gen);
+    }
+
+    inline SEXP fstappendrle(Rcpp::String fileName, SEXP values, SEXP lengths, SEXP colNames, double start, double end, SEXP compression, SEXP uniformEncoding) {
+        typedef SEXP(*Ptr_fstappendrle)(SEXP,SEXP,SEXP,SEXP,SEXP,SEXP,SEXP,SEXP);
+        static Ptr_fstappendrle p_fstappendrle = NULL;
+        if (p_fstappendrle == NULL) {
+            validateSignature("SEXP(*fstappendrle)(Rcpp::String,SEXP,SEXP,SEXP,double,double,SEXP,SEXP)");
+            p_fstappendrle = (Ptr_fstappendrle)R_GetCCallable("fstcore", "_fstcore_fstappendrle");
+        }
+        RObject rcpp_result_gen;
+        {
+            rcpp_result_gen = p_fstappendrle(Shield<SEXP>(Rcpp::wrap(fileName)), Shield<SEXP>(Rcpp::wrap(values)), Shield<SEXP>(Rcpp::wrap(lengths)), Shield<SEXP>(Rcpp::wrap(colNames)), Shield<SEXP>(Rcpp::wrap(start)), Shield<SEXP>(Rcpp::wrap(end)), Shield<SEXP>(Rcpp::wrap(compression)), Shield<SEXP>(Rcpp::wrap(uniformEncoding)));
+        }
+        if (rcpp_result_gen.inherits("interrupted-error"))
+            throw Rcpp::internal::InterruptedException();
+        if (Rcpp::internal::isLongjumpSentinel(rcpp_result_gen))
+            throw Rcpp::LongjumpException(rcpp_result_gen);
+        if (rcpp_result_gen.inherits("try-error"))
+            throw Rcpp::exception(Rcpp::as<std::string>(rcpp_result_gen).c_str());
+        return Rcpp::as<SEXP >(rcpp_result_gen);
+    }
+
     inline SEXP fsthasher(SEXP rawVec, SEXP seed, SEXP blockHash) {
         typedef SEXP(*Ptr_fsthasher)(SEXP,SEXP,SEXP);
         static Ptr_fsthasher p_fsthasher = NULL;
