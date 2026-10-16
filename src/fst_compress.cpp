@@ -26,6 +26,17 @@
 
 #include <fst_type_factory.h>
 
+// Equivalent of Rf_NonNullStringMatch, which is not part of the R API (removed in R 4.6): both strings non-NA,
+// non-empty and equal.
+static bool fst_string_match(SEXP a, SEXP b)
+{
+  if (a == NA_STRING || b == NA_STRING) return false;
+  const char* ca = CHAR(a);
+  const char* cb = CHAR(b);
+  return ca[0] != '\0' && cb[0] != '\0' && strcmp(ca, cb) == 0;
+}
+
+
 
 // Calculate the 64-bit xxHash of a raw vector using a default or custom hash seed
 SEXP fsthasher(SEXP rawVec, SEXP seed, SEXP blockHash)
@@ -91,10 +102,10 @@ SEXP fstcomp(SEXP rawVec, SEXP compressor, SEXP compression, SEXP hash)
   SEXP lz4_str  = PROTECT(Rf_mkChar("LZ4"));
   SEXP zstd_str = PROTECT(Rf_mkChar("ZSTD"));
 
-  if (Rf_NonNullStringMatch(STRING_ELT(compressor, 0), lz4_str))
+  if (fst_string_match(STRING_ELT(compressor, 0), lz4_str))
   {
     algo = COMPRESSION_ALGORITHM::ALGORITHM_LZ4;
-  } else if (Rf_NonNullStringMatch(STRING_ELT(compressor, 0), zstd_str))
+  } else if (fst_string_match(STRING_ELT(compressor, 0), zstd_str))
   {
     algo = COMPRESSION_ALGORITHM::ALGORITHM_ZSTD;
   } else
