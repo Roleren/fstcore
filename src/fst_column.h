@@ -197,7 +197,7 @@ public:
       Rf_classgets(int64Vec, classAttr);
 
       Rf_setAttrib(int64Vec, Rf_mkString(".S3Class"), Rf_mkString("integer64"));
-      SET_S4_OBJECT(int64Vec);
+      int64Vec = Rf_asS4(int64Vec, TRUE, 0);  // SET_S4_OBJECT is not part of the R API (removed in R >= 4.5); fresh object, set in place
 
       UNPROTECT(2);  // int64Vec, classAttr
       return;
